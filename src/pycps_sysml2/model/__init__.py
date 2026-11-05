@@ -9,6 +9,8 @@ Anti-corruption layer over the external `sysmlpy` parser:
   ``sysmlpy`` drops from its wrapper objects.
 - ``loader.py``   — walks a file or directory, merges the packages, and
   builds the repo-owned model.
+- ``attribution.py`` — the per-file scan that ties each merged definition
+  back to the file that declared it.
 - ``exporter.py`` — emits conformant SysML v2 text from the repo-owned model
   (no parser involvement, so the output format is a repo contract).
 

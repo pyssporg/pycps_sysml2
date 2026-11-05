@@ -18,15 +18,22 @@ from pycps_sysml2.parameters import validate_marker_definitions
 from tests.fixture_files import fixture_text
 from tests.testhelpers import write_model
 
-CORE_NAMES = {
-    "SspModel",
-    "Analysis",
-    "FmuModel",
-    "ParameterInterface",
-    "ParameterSet",
-    "FmuMetadata",
-    "SspMetadata",
-    "Experiment",
+CORE_PACKAGE = "PysspCore"
+
+#: ``included_definitions`` stores the architecture key, so the core package
+#: qualifies every name it supplies.
+CORE_KEYS = {
+    f"{CORE_PACKAGE}::{name}"
+    for name in (
+        "SspModel",
+        "Analysis",
+        "FmuModel",
+        "ParameterInterface",
+        "ParameterSet",
+        "FmuMetadata",
+        "SspMetadata",
+        "Experiment",
+    )
 }
 
 COMMON_DEFINITIONS = """
@@ -122,14 +129,14 @@ def test_load_with_include_resolves_core_markers(tmp_path) -> None:
     assert metadata is not None
     assert metadata.source == "models/fmu/Ball/fmu"
     assert metadata.implementation == "CoSimulation"
-    assert architecture.included_definitions == CORE_NAMES
+    assert architecture.included_definitions == CORE_KEYS
 
 
 def test_load_with_include_accepts_a_directory(tmp_path) -> None:
     architecture = load(_marker_user(tmp_path), core_definitions().parent)
 
-    assert "SspModel" in architecture.part_definitions
-    assert architecture.included_definitions == CORE_NAMES
+    assert f"{CORE_PACKAGE}::SspModel" in architecture.part_definitions
+    assert architecture.included_definitions == CORE_KEYS
 
 
 def test_load_accepts_a_sequence_or_star_includes(tmp_path) -> None:
@@ -157,9 +164,9 @@ def test_included_root_package_name_need_not_match(tmp_path) -> None:
 
     assert architecture.package_name == "MarkerUser"
     assert architecture.included_definitions == {
-        "SspModel",
-        "ParameterInterface",
-        "FmuMetadata",
+        "CommonVocab::SspModel",
+        "CommonVocab::ParameterInterface",
+        "CommonVocab::FmuMetadata",
     }
     validate_role_markers(architecture)
     assert architecture.get_part_def("System").specializes == ("SspModel",)
@@ -177,33 +184,61 @@ def test_locally_declared_marker_is_a_duplicate_error(tmp_path) -> None:
         }
         """,
     )
+    included = tmp_path / "included.sysml"
+    write_model(included, "package LocalMarkers { part def SspModel; }")
 
     with pytest.raises(ValueError) as excinfo:
-        load(model_file, core_definitions())
+        load(model_file, included)
 
     message = str(excinfo.value)
     assert "'SspModel'" in message
     assert "part def" in message
     assert str(model_file) in message
-    assert str(core_definitions()) in message
+    assert str(included) in message
     assert "remove the local declaration" in message
 
 
-def test_duplicate_between_included_roots_names_both(tmp_path) -> None:
+def test_local_marker_shadows_the_included_one(tmp_path) -> None:
+    model_file = tmp_path / "model.sysml"
+    write_model(
+        model_file,
+        """
+        package LocalMarkers {
+          part def SspModel;
+
+          part def System :> SspModel;
+        }
+        """,
+    )
+
+    architecture = load(model_file, core_definitions())
+
+    assert {"SspModel", "System"} <= set(architecture.part_definitions)
+    assert "PysspCore::SspModel" in architecture.part_definitions
+    assert architecture.resolve_part("SspModel") is architecture.get_part_def("SspModel")
+    assert (
+        architecture.resolve_part("PysspCore::SspModel").package == CORE_PACKAGE
+    )
+
+
+def test_two_included_packages_may_declare_the_same_name(tmp_path) -> None:
     model_dir = _model_dir(tmp_path)
     first = tmp_path / "first"
     second = tmp_path / "second"
     write_model(first / "one.sysml", "package First { part def SspModel; }")
     write_model(second / "two.sysml", "package Second { part def SspModel; }")
 
-    with pytest.raises(ValueError) as excinfo:
-        load(model_dir, first, second)
+    architecture = load(model_dir, first, second)
 
-    message = str(excinfo.value)
-    assert "'SspModel'" in message
-    assert str(first) in message
-    assert str(second) in message
-    assert "only one included root" in message
+    assert {"First::SspModel", "Second::SspModel"} <= set(
+        architecture.part_definitions
+    )
+    assert architecture.included_definitions == {
+        "First::SspModel",
+        "Second::SspModel",
+    }
+    with pytest.raises(ValueError, match="Ambiguous definition name 'SspModel'"):
+        architecture.resolve_part("SspModel")
 
 
 def test_export_declared_omits_included_definitions(tmp_path) -> None:

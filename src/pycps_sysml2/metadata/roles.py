@@ -97,9 +97,10 @@ def _variation_point(
     if definition.is_variation:
         return definition.name
     seen = set() if seen is None else seen
-    if definition.name in seen:
+    key = architecture.stored_key(definition)
+    if key in seen:
         return None
-    seen.add(definition.name)
+    seen.add(key)
     for usage in definition.parts.values():
         if usage.is_variation:
             return usage.name
@@ -138,7 +139,7 @@ def validate_role_markers(architecture: Architecture) -> None:
         if short_name(name) in {SSP_MODEL_MARKER, ANALYSIS_MARKER, FMU_MODEL_MARKER}
     }
     for marker in sorted(used):
-        if marker not in architecture.part_definitions:
+        if not architecture.has_definition(architecture.part_definitions, marker):
             raise ValueError(
                 f"Role marker '{marker}' is used but not defined. Add "
                 f"'part def {marker};' to the package."

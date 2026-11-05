@@ -16,9 +16,11 @@ dataclasses.
 |---|---|---|
 | `model/model.py` | IR dataclasses: architecture, definitions, usages, attributes, connections, bindings, constraints | stdlib |
 | `model/names.py`, `model/exporter.py` | name quoting and unquoting; SysML text emission | `model.model` |
-| `model/parser.py` | one file to declarations: values, endpoints, directions, multiplicity, supertypes, constraint text | `sysmlpy`, `model.names`, `model.model` |
+| `model/parser.py` | one file to declarations: values, directions, multiplicity, supertypes, constraint usages | `sysmlpy`, `model.names`, `model.model`, `model.source` |
+| `model/source.py` | authored source text: connection endpoints, comment/string masking, constraint bodies | `model.model` |
 | `model/variation.py` | the raw ANTLR walk: variation points, variants, configuration bodies | `sysmlpy`, `model.model` |
-| `model/loader.py` | primary-root file walk and package merge, included-root merge, variation facts, IR construction, duplicate rejection | all of `model` |
+| `model/loader.py` | primary-root file walk, one merged parse, IR construction, duplicate rejection | all of `model` |
+| `model/attribution.py` | per-file scan: packages, variation facts, constraint bodies, definition-to-file attribution | `model.parser`, `model.source`, `model.variation`, `model.names` |
 | `definitions/` | the packaged core vocabulary and `core_definitions()` | stdlib |
 | `core/control.py`, `core/fmi_helpers.py` | control attributes with injectable prefix and retired map; FMI helpers | `model` |
 | `metadata/helpers.py` | the single copy of `short_name`, `specializes_marker`, `effective_members` | `model` |

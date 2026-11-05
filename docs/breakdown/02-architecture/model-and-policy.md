@@ -22,6 +22,14 @@ rules.
 variation facts). It is repo-owned: no sysmlpy object crosses the parser
 boundary, and loading is non-validating.
 
+**Package namespace.** Packages are first-class in storage only: a definition of
+the architecture's own package (or a synthesized one) is keyed by its bare
+`name`, one from any other package by `Pkg::Name`, and `Definition.name` stays
+bare so no qualifier reaches an artifact surface. One resolver
+(`Architecture.resolve`) serves every lookup: an exact stored key wins, a bare
+name falls back to qualified keys (one match resolves, several raise naming each
+candidate), a qualified miss returns `None`.
+
 **Three policy objects.** `RolePolicy` (`metadata/roles.py`) binds the model,
 analysis, FmuModel, and experiment markers to their predicates and default
 implementations. `DialectPolicy` (`parameters/policy.py`) composes a

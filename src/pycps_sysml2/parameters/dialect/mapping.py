@@ -329,7 +329,7 @@ def parameter_sets_for_generation(
     if set_names:
         definitions: list[AttributeDefinition] = []
         for name in set_names:
-            definition = architecture.attribute_definitions.get(name)
+            definition = architecture.resolve_attribute_def(name)
             if definition is None:
                 raise ValueError(f"Unknown parameter set '{name}'")
             if not is_parameter_set(definition):

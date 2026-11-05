@@ -13,9 +13,9 @@ status: current
 answers it the same way for the SSP and the FMI domain.
 
 - **Load.** `load(path, *includes)` takes a `.sysml` file or a directory of
-  them as the primary root, merges the sorted files into one same-package
-  `Architecture`, and does not validate: unresolved references surface later as
-  missing lookups. Further roots in `*includes` (or after the first element of
+  them as the primary root, loads the sorted files in one sysmlpy parse into
+  one same-package `Architecture`, and does not validate: unresolved
+  references surface later as missing lookups. Further roots in `*includes` (or after the first element of
   a sequence) merge included definitions under any package name; a duplicate
   definition is an error and included names are excluded from export.
 - **IR.** Part, port, attribute, requirement, and constraint definitions and

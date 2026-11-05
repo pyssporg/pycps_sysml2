@@ -129,13 +129,14 @@ def _effective_members(
     position; an unnamed constraint is never overridden.
     """
     seen = frozenset() if seen is None else seen
-    if definition.name in seen:
+    key = architecture.stored_key(definition)
+    if key in seen:
         return {}, {}
-    seen = seen | {definition.name}
+    seen = seen | {key}
     constraints: dict[object, ConstraintUsage] = {}
     parts: dict[str, PartUsage] = {}
     for supertype in definition.specializes:
-        base = architecture.part_definitions.get(supertype.split("::")[-1])
+        base = architecture.resolve_part(supertype)
         if base is None:
             continue
         inherited_constraints, inherited_parts = _effective_members(
@@ -162,7 +163,10 @@ def _walk(
         results.append(_evaluate_usage(architecture, usage, owner, selections))
     for part_usage in parts.values():
         child = architecture.resolve_part(part_usage)
-        if child is None or child.name in stack:
+        if child is None:
+            continue
+        key = architecture.stored_key(child)
+        if key in stack:
             continue
         _walk(
             architecture,
@@ -170,7 +174,7 @@ def _walk(
             _join(owner, part_usage.name),
             selections,
             results,
-            stack | {child.name},
+            stack | {key},
         )
 
 
@@ -198,7 +202,7 @@ def evaluate(
         "",
         dict(selections or {}),
         results,
-        frozenset({definition.name}),
+        frozenset({architecture.stored_key(definition)}),
     )
     return ConstraintReport(tuple(results))
 
@@ -262,7 +266,12 @@ def _expression_for(
 ) -> tuple[str, ConstraintDefinition | None]:
     definition = None
     if usage.type_name:
-        definition = architecture.constraint_definitions.get(usage.type_name)
+        resolved = architecture.resolve(
+            architecture.constraint_definitions, usage.type_name
+        )
+        definition = (
+            resolved if isinstance(resolved, ConstraintDefinition) else None
+        )
         if definition is None:
             raise _Invalid(f"unknown constraint definition '{usage.type_name}'")
     expression = usage.expression or (definition.expression if definition else None)

@@ -9,13 +9,22 @@ status: current
 
 # Parser
 
-`model/parser.py` is the only module that touches `sysmlpy`. It parses one file
-into declarations; `model/variation.py` walks the same raw tree for the
-variation facts sysmlpy does not model.
+`model/parser.py` is the only module that touches `sysmlpy`. It loads one merged
+set of files into declarations; `model/variation.py` walks each file's raw tree
+for the variation facts sysmlpy does not model.
 
-**Per file.** One file yields one package with its part, port, attribute,
-requirement, and constraint definitions; each definition keeps its members,
-specialization list, doc text, and `source_file`. Port direction comes from the
+**Merged parse.** `parse_files(paths)` hands every file of every root to one
+`sysmlpy.load_files` call, so sysmlpy merges files that declare the same
+package and the loader no longer does. `parse_packages(path)` stays the
+one-file entry point and is the per-file attribution pass: the merged model
+exposes no `source_file`, so each definition's origin comes from a second
+parse of every file. Text concatenation is not equivalent; `loads` keeps
+duplicate packages apart and reports `DUPLICATE_NAME`. The primary root must
+still resolve to one package name; include roots may use any name.
+
+**Declarations.** Each package yields part, port, attribute, requirement, and
+constraint definitions; each definition keeps its members, specialization
+list, doc text, and `source_file`. Port direction comes from the
 grammar prefix, not the public port object. Connection and binding endpoints
 come from the feature chains, so a dotted end keeps both names and a bare end
 stays a boundary endpoint with no part. Multiplicity comes from the grammar's
@@ -27,8 +36,8 @@ stay tuples, a pint `Quantity` collapses to its magnitude, and string escapes
 are decoded. A value-less attribute yields `None`.
 
 **Constraints.** `constraint def` bodies and `assert`/`assert not` usages are
-captured as expressions and tokenized here; evaluation belongs to
-`parameters/constraints.py`.
+captured as expressions; body scanning and tokenization live in
+`model/source.py`, and evaluation belongs to `parameters/constraints.py`.
 
 **Boundary.** The parser resolves no names, imports no package, and swallows no
 error: a syntax error surfaces as `sysmlpy`'s `SysMLSyntaxError` with its
