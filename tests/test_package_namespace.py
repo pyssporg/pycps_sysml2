@@ -141,6 +141,7 @@ def test_deep_marker_walk_is_keyed_by_stored_key_not_bare_name() -> None:
     """
     architecture = Architecture(
         package_name="Fixed",
+        imports={"Alpha": None},
         part_definitions={
             "SspModel": PartDefinition(name="SspModel", package="Fixed"),
             "Base": PartDefinition(name="Base", package="Fixed"),
@@ -162,6 +163,7 @@ def test_component_definitions_keeps_same_named_definitions_of_two_packages() ->
     """Dedupe is by stored key: ``Same`` and ``Alpha::Same`` both stay."""
     architecture = Architecture(
         package_name="Fixed",
+        imports={"Alpha": None},
         part_definitions={
             "Same": PartDefinition(name="Same", package="Fixed"),
             "Alpha::Same": PartDefinition(name="Same", package="Alpha"),
@@ -194,6 +196,7 @@ def test_component_refs_cycle_guard_is_keyed_by_stored_key() -> None:
     """A same-named definition of another package is not a cycle."""
     architecture = Architecture(
         package_name="Fixed",
+        imports={"Alpha": None},
         part_definitions={
             "Same": PartDefinition(
                 name="Same",

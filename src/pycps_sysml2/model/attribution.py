@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from pycps_sysml2.model.names import unquote_name
-from pycps_sysml2.model.parser import parse_packages
+from pycps_sysml2.model.parser import import_declarations, parse_packages
 from pycps_sysml2.model.source import constraint_definitions_from_source
 from pycps_sysml2.model.variation import VariationFacts, variation_facts
 
@@ -25,6 +25,7 @@ __all__ = [
     "MergeState",
     "ParsedFile",
     "attribution",
+    "collect_imports",
     "primary_package_name",
     "scan_files",
 ]
@@ -47,6 +48,7 @@ class ParsedFile(NamedTuple):
     packages: list
     variation: VariationFacts
     constraint_bodies: dict[str, str]
+    imports: list[tuple[str, str | None]]
 
 
 class MergeState:
@@ -93,9 +95,43 @@ def scan_files(entries: list[tuple[Path, Path | None]]) -> list[ParsedFile]:
                 packages=packages,
                 variation=variation_facts(source),
                 constraint_bodies=constraint_definitions_from_source(source),
+                imports=[
+                    declaration
+                    for package in packages
+                    for declaration in import_declarations(package)
+                ],
             )
         )
     return scanned
+
+
+def collect_imports(
+    scanned: list[ParsedFile],
+) -> dict[str, frozenset[str] | None]:
+    """Merge every file's import declarations into one visibility map.
+
+    Read from the per-file scan, not the merged parse: sysmlpy keeps only the
+    first file's imports when it merges same-named packages. The result is
+    keyed by imported package name; ``None`` means a ``::*`` wildcard and a
+    member import accumulates a union. Wildcards absorb member imports, so
+    duplicate declarations never raise. Package names are sorted for a stable
+    order regardless of load order.
+    """
+    collected: dict[str, set[str] | None] = {}
+    for parsed in scanned:
+        for package, member in parsed.imports:
+            if collected.get(package, set()) is None:
+                continue
+            if member is None:
+                collected[package] = None
+            elif package in collected:
+                collected[package].add(member)
+            else:
+                collected[package] = {member}
+    return {
+        package: None if collected[package] is None else frozenset(collected[package])
+        for package in sorted(collected)
+    }
 
 
 def primary_package_name(primary: list[ParsedFile]) -> str:

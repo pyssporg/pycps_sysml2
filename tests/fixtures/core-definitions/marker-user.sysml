@@ -1,4 +1,7 @@
 package MarkerUser {
+  private import ScalarValues::*;
+  private import PysspCore::*;
+
   part def System :> SspModel {
     attribute fmu_meta : BallFmu;
   }

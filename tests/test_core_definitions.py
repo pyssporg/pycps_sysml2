@@ -69,6 +69,12 @@ def _model_dir(tmp_path: Path) -> Path:
     return model_dir
 
 
+def _add_imports(model_dir: Path, *packages: str) -> None:
+    """Declare wildcard imports in a second file of the primary package."""
+    lines = "".join(f"  private import {package}::*;\n" for package in packages)
+    write_model(model_dir / "imports.sysml", f"package MarkerUser {{\n{lines}}}")
+
+
 def _common_dir(tmp_path: Path) -> Path:
     """An included root whose package name differs from the model's."""
     common_dir = tmp_path / "common"
@@ -158,6 +164,7 @@ def test_load_accepts_a_sequence_or_star_includes(tmp_path) -> None:
 
 def test_included_root_package_name_need_not_match(tmp_path) -> None:
     model_dir = _model_dir(tmp_path)
+    _add_imports(model_dir, "CommonVocab")
     common_dir = _common_dir(tmp_path)
 
     architecture = load(model_dir, common_dir)
@@ -204,6 +211,8 @@ def test_local_marker_shadows_the_included_one(tmp_path) -> None:
         model_file,
         """
         package LocalMarkers {
+          private import PysspCore::*;
+
           part def SspModel;
 
           part def System :> SspModel;
@@ -223,6 +232,7 @@ def test_local_marker_shadows_the_included_one(tmp_path) -> None:
 
 def test_two_included_packages_may_declare_the_same_name(tmp_path) -> None:
     model_dir = _model_dir(tmp_path)
+    _add_imports(model_dir, "First", "Second")
     first = tmp_path / "first"
     second = tmp_path / "second"
     write_model(first / "one.sysml", "package First { part def SspModel; }")

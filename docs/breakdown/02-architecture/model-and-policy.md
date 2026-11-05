@@ -30,6 +30,15 @@ bare so no qualifier reaches an artifact surface. One resolver
 name falls back to qualified keys (one match resolves, several raise naming each
 candidate), a qualified miss returns `None`.
 
+**Imports.** `Architecture.imports` maps an imported package to the members it
+exposes (`None` is a `::*` wildcard). A qualified definition is visible only
+through a matching import, so a bare name never falls back to an unimported
+package; an explicit `Pkg::Name` that names a stored definition in an unimported
+package raises and names the `private import` to add. Visibility is
+architecture-wide, not per importing file — a deliberate simplification until
+SysML scopes are modelled. Unknown import targets load silently and are left to
+`analyze`.
+
 **Three policy objects.** `RolePolicy` (`metadata/roles.py`) binds the model,
 analysis, FmuModel, and experiment markers to their predicates and default
 implementations. `DialectPolicy` (`parameters/policy.py`) composes a

@@ -1,4 +1,7 @@
 package Fixed {
+  private import Alpha::*;
+  private import Beta::*;
+
   part def SspModel;
 
   part def Step;

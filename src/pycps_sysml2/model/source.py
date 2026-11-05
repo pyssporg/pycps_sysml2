@@ -1,10 +1,11 @@
-"""Authored source-text scanning: connection ends and constraint bodies.
+"""Authored source-text scanning: imports, connection ends, constraint bodies.
 
 This module works on plain ``str`` text and owns no ``sysmlpy`` import. The
 parser hands it the authored source (and the grammar dump of a constraint
 usage) because the grammar layer garbles a constraint *definition* body and
 because a connection end is a plain dotted name once the grammar has been
-walked.
+walked. Import declarations are read from the grammar objects when they are
+well formed and from their textual dump otherwise.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import re
 from pathlib import Path
 
 from pycps_sysml2.model.model import ConstraintParameter
+from pycps_sysml2.model.names import unquote_name
 
 
 # -- connection endpoints ---------------------------------------------------
@@ -31,6 +33,46 @@ def connection_endpoint(
     if len(names) == 1:
         return None, names[0]
     return names[0], names[-1]
+
+
+# -- import declarations ----------------------------------------------------
+
+
+_IMPORT = re.compile(
+    r"^(?:(?:private|protected|public)\s+)?import\s+(?:all\s+)?"
+    r"(?P<target>.+?)\s*;?$"
+)
+
+
+def _unquote_path(path: str) -> str:
+    """Unquote each ``::``-separated segment of a qualified name."""
+    return "::".join(unquote_name(part.strip()) for part in path.split("::"))
+
+
+def parse_import_declaration(text: str) -> tuple[str, str | None] | None:
+    """``(package, member)`` for one import statement, or ``None``.
+
+    ``member`` is ``None`` for a ``::*`` wildcard and the imported name
+    otherwise. The parser boundary prefers structured sysmlpy objects and
+    falls back here only when that shape is unusable, so this also accepts the
+    ``dump()`` form (``private import Pkg::*;``). Anything that is not an
+    import — an ``alias``, malformed text — returns ``None`` and is skipped.
+    """
+    match = _IMPORT.match(text.strip())
+    if match is None:
+        return None
+    target = match.group("target").strip()
+    if target.endswith("::*"):
+        package = target[:-3].strip()
+        return (_unquote_path(package), None) if package else None
+    if "::" not in target:
+        return None
+    package, member = target.rsplit("::", 1)
+    package = _unquote_path(package)
+    member = unquote_name(member.strip())
+    if not package or not member or "*" in member:
+        return None
+    return package, member
 
 
 # -- constraint bodies ------------------------------------------------------

@@ -407,6 +407,14 @@ class Architecture:
 
     ``included_definitions`` holds the *stored keys* supplied by included roots,
     not authored in the model. Consumers such as the exporter skip them.
+
+    ``imports`` maps an imported package name to the members it exposes, or
+    ``None`` for a ``::*`` wildcard. It gates cross-package visibility: a
+    qualified definition is reachable only through a matching entry, so a bare
+    name never falls back to a package the model did not import. Visibility is
+    architecture-wide, not per importing file — every collected import applies
+    to the whole merged architecture. That is a deliberate simplification until
+    SysML scopes are modelled.
     """
 
     package_name: str
@@ -420,6 +428,7 @@ class Architecture:
         default_factory=dict
     )
     included_definitions: set[str] = field(default_factory=set)
+    imports: dict[str, frozenset[str] | None] = field(default_factory=dict)
 
     # -- namespace ---------------------------------------------------------
 
@@ -433,24 +442,55 @@ class Architecture:
             return definition.name
         return f"{definition.package}::{definition.name}"
 
+    def _imported(self, package: str, member: str | None = None) -> bool:
+        """Whether *package* exposes every member or just *member*.
+
+        An import entry of ``None`` is a ``::*`` wildcard; otherwise only the
+        named members are visible. A package with no entry exposes nothing.
+        """
+        if package not in self.imports:
+            return False
+        members = self.imports[package]
+        return members is None or (member is not None and member in members)
+
+    def _visible_key(self, key: str) -> bool:
+        """Whether a stored qualified key is reachable through an import."""
+        if "::" not in key:
+            return True
+        package, member = key.rsplit("::", 1)
+        return self._imported(package, member)
+
     def resolve(
         self, definitions: Mapping[str, Definition], name: str
     ) -> Definition | None:
         """The definition *name* refers to in one definition namespace.
 
-        An exact stored-key hit always wins. A bare name falls back to the
-        definitions stored qualified: one match returns it, several raise a
-        ``ValueError`` naming every candidate, none returns ``None``. A
-        qualified name that misses exactly does not fall back.
+        An exact stored-key hit always wins, provided an imported package
+        exposes it. A bare name falls back to the *visible* qualified
+        definitions: one match returns it, several raise a ``ValueError``
+        naming every candidate, none returns ``None``. An explicitly qualified
+        name that names an existing definition in a package the architecture
+        does not import raises, because the author most likely forgot the
+        import; a qualified name that matches nothing stays ``None``, leaving
+        unknown targets to ``analyze``.
         """
         if name in definitions:
+            if "::" in name and not self._visible_key(name):
+                package = name.rsplit("::", 1)[0]
+                raise ValueError(
+                    f"Definition '{name}' is in package '{package}', which is "
+                    "not imported; add "
+                    f"'private import {package}::*;' to make it visible"
+                )
             return definitions[name]
         if "::" in name:
             return None
         candidates = [
             key
             for key in definitions
-            if "::" in key and key.split("::", 1)[1] == name
+            if "::" in key
+            and self._visible_key(key)
+            and key.rsplit("::", 1)[1] == name
         ]
         if not candidates:
             return None

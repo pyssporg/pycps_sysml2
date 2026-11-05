@@ -8,7 +8,7 @@ load that merges the bundled core definitions.
 
 | Path | Behaviour |
 | --- | --- |
-| `marker-user.sysml` | uses `SspModel`, `ParameterInterface`, and `FmuMetadata` without declaring them |
+| `marker-user.sysml` | imports `ScalarValues` and `PysspCore`, then uses `SspModel`, `ParameterInterface`, and `FmuMetadata` without declaring them |
 
 ## What this case proves
 

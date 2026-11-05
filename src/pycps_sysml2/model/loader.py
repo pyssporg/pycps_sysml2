@@ -18,7 +18,11 @@ Package names are first-class in the resulting
 :class:`~pycps_sysml2.model.model.Architecture`: a definition of the primary
 package is stored under its bare name, and one from any other package under
 ``"<package>::<name>"``. Definition ``.name`` stays bare, so no package
-qualifier reaches an artifact surface.
+qualifier reaches an artifact surface. Import declarations gate cross-package
+visibility (``Architecture.imports``); they are collected in the per-file scan
+because sysmlpy's own package merge keeps only the first file's imports.
+Unknown import targets are left untouched: a missing package is a model fact
+``analyze`` reports, not a load error.
 
 The parser boundary is exactly one module: only
 :mod:`pycps_sysml2.model.parser` imports ``sysmlpy`` and reads raw ANTLR trees,
@@ -36,6 +40,7 @@ from pathlib import Path
 from pycps_sysml2.model.attribution import (
     MergeState,
     attribution,
+    collect_imports,
     primary_package_name,
     scan_files,
 )
@@ -128,7 +133,10 @@ def load(
     scanned = primary + scan_files(included_files)
 
     model = parse_files([parsed.file for parsed in scanned])
-    architecture = Architecture(package_name=package_name)
+    architecture = Architecture(
+        package_name=package_name,
+        imports=collect_imports(scanned),
+    )
     _merge_model(architecture, model, attribution(model, scanned))
     return architecture
 

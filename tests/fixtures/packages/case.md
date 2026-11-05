@@ -10,8 +10,10 @@ generated from them, so the tree holds inputs only.
   of the primary package keeps its bare key, a definition of another package is
   keyed `Pkg::Name`, and `Definition.name` stays bare. Two packages may declare
   the same bare name; a bare lookup then prefers the primary and an ambiguous
-  bare lookup is refused. Included packages never reach `export_declared`, and a
-  qualified configuration value `Pkg::Type::variant` resolves its type.
+  bare lookup is refused. An included package is visible only through a
+  `private import`, which the `Fixed` fixtures declare. Included packages never
+  reach `export_declared`, and a qualified configuration value
+  `Pkg::Type::variant` resolves its type.
 - **Level:** unit. Every test reads the parsed model.
 - **Input:** `primary/` (package `Fixed`, two files so export emits two
   `package` blocks), `alpha/` (package `Alpha`, declaring `Same` and the
@@ -34,11 +36,11 @@ Inputs, relative to this directory. None is generated.
 
 | Path | Behaviour |
 | --- | --- |
-| `primary/model.sysml` | package `Fixed`: `Same` and `System :> Same` |
+| `primary/model.sysml` | package `Fixed`: imports `Alpha` and declares `Same`, `System :> Same` |
 | `primary/extra.sysml` | package `Fixed`: `Extra`, a second source file |
 | `alpha/definitions.sysml` | package `Alpha`: its own `Same` and `SourceChoice` |
 | `beta/definitions.sysml` | package `Beta`: its own `Same` |
-| `configuration/model.sysml` | package `Fixed`: variation point, configuration binding, composition |
+| `configuration/model.sysml` | package `Fixed`: imports `Alpha`/`Beta`, variation point, configuration binding, composition |
 
 ## What this case proves
 

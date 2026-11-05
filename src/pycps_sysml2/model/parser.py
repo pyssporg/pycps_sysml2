@@ -46,7 +46,11 @@ import sysmlpy
 
 from pycps_sysml2.model.model import ConstraintUsage
 from pycps_sysml2.model.names import unquote_name
-from pycps_sysml2.model.source import _body_text, parse_constraint_body
+from pycps_sysml2.model.source import (
+    _body_text,
+    parse_constraint_body,
+    parse_import_declaration,
+)
 
 
 # sysmlpy tries to persist its ANTLR DFA cache on the first parse of a
@@ -100,6 +104,50 @@ def parse_packages(path: Path | str) -> list:
 def parse_tree(source: str):
     """Raw ANTLR parse tree of one source text (a sysmlpy internal)."""
     return sysmlpy.antlr_parser.parse(source)
+
+
+# -- import declarations (visibility data, not resolution) -----------------
+
+
+def import_declarations(package) -> list[tuple[str, str | None]]:
+    """The import declarations of one parsed package, as plain data.
+
+    Each entry is ``(package, member)``: ``member`` is ``None`` for a ``::*``
+    wildcard and the imported name otherwise. The structured grammar objects
+    (``NamespaceImport`` / ``MembershipImport``) are read first; anything they
+    cannot describe (an alias, a shape a future pin changes) falls back to the
+    declaration's ``dump()`` text via
+    :func:`pycps_sysml2.model.source.parse_import_declaration`. Declarations
+    the fallback also cannot read are skipped; the loader does not validate
+    targets.
+    """
+    declarations: list[tuple[str, str | None]] = []
+    for element in package.imports:
+        declaration = _import_from_structure(element)
+        if declaration is None:
+            declaration = parse_import_declaration(element.dump())
+        if declaration is not None:
+            declarations.append(declaration)
+    return declarations
+
+
+def _import_from_structure(node) -> tuple[str, str | None] | None:
+    """Read one sysmlpy import node when its structured shape is usable."""
+    children = list(getattr(node, "children", ()))
+    if len(children) != 1:
+        return None
+    child = children[0]
+    namespace = getattr(child, "namespace", None)
+    if namespace is not None:
+        names = list(getattr(namespace.namespaces, "names", ()))
+        return ("::".join(names), None) if names else None
+    membership = getattr(child, "membership", None)
+    if membership is not None:
+        names = list(getattr(membership.name, "names", ()))
+        if len(names) < 2:
+            return None
+        return "::".join(names[:-1]), names[-1]
+    return None
 
 
 # -- attribute values (legacy §5.5 semantics) -------------------------------

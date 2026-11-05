@@ -33,6 +33,9 @@ SYMLPY_IMPORT = re.compile(r"\s*(?:import|from)\s+sysmlpy\b")
 MAX_MODULE_LINES = 600
 
 LARGE_MODULES: dict[str, str] = {
+    "model/model.py": (
+        "definition dataclasses and the architecture namespace/import resolver"
+    ),
     "model/variation.py": (
         "one raw-tree pass: variation points, configuration bodies, usage extras"
     ),

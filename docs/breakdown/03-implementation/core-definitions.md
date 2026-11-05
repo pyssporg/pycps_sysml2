@@ -35,6 +35,9 @@ vocabulary (`package PysspCore`): `SspModel`, `Analysis`, `FmuModel`,
   `Pkg::Name`. `Definition.name` stays bare, so no qualifier reaches an
   artifact surface. Every included key lands in
   `Architecture.included_definitions`.
+- **Visibility:** including a root is not enough to reach its definitions. The
+  model must `private import <package>::*;` (or import specific members);
+  `Architecture.imports` records what is visible and gates resolution.
 - **Export exclusion:** `export_declared()` emits only the definitions of the
   architecture's own package, so an included root never appears in the model's
   declaration text.
