@@ -30,4 +30,5 @@ dataclasses.
 **Layering rule.** `model` ← `core` ← `metadata` ← `parameters`, with
 `parameters/dialect` above `metadata`. Nothing below `parameters` imports
 `parameters`; nothing below `metadata` imports a marker constant or calls
-`is_ssp_model`/`is_analysis`. There is no `cli.py`, `artifacts/`, or `sysml/`.
+`is_ssp_model`/`is_analysis`/`is_fmu_model`. There is no `cli.py`,
+`artifacts/`, or `sysml/`.

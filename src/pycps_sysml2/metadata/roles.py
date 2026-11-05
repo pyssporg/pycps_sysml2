@@ -4,6 +4,7 @@ The marker definitions are ordinary SysML definitions in the model package::
 
     part def SspModel;
     part def Analysis;
+    part def FmuModel;
 
     attribute def Experiment {
       attribute startTime : Real;
@@ -15,6 +16,8 @@ The marker definitions are ordinary SysML definitions in the model package::
 A composition is exportable when its ``part def`` specializes ``SspModel``. An
 analysis specializes ``Analysis`` and composes the exported model through a single
 part usage, conventionally named ``sut``. Analyses are never exported as SSPs.
+An FMU component specializes ``FmuModel``; it is the export unit itself, so its
+FMU metadata belongs on that definition.
 
 The functions are usable standalone, and :class:`RolePolicy` bundles them so a
 consumer that owns a different role vocabulary can inject a predicate instead of
@@ -41,6 +44,7 @@ from pycps_sysml2.model import (
 
 SSP_MODEL_MARKER = "SspModel"
 ANALYSIS_MARKER = "Analysis"
+FMU_MODEL_MARKER = "FmuModel"
 EXPERIMENT_MARKER = "Experiment"
 
 EXPERIMENT_FIELDS = ("startTime", "stopTime", "stepSize")
@@ -66,6 +70,10 @@ def is_ssp_model(architecture: Architecture, definition: PartDefinition) -> bool
 
 def is_analysis(architecture: Architecture, definition: PartDefinition) -> bool:
     return specializes_marker_deep(architecture, definition, ANALYSIS_MARKER)
+
+
+def is_fmu_model(architecture: Architecture, definition: PartDefinition) -> bool:
+    return specializes_marker_deep(architecture, definition, FMU_MODEL_MARKER)
 
 
 def is_experiment_definition(
@@ -127,7 +135,7 @@ def validate_role_markers(architecture: Architecture) -> None:
         short_name(name)
         for definition in architecture.part_definitions.values()
         for name in definition.specializes
-        if short_name(name) in {SSP_MODEL_MARKER, ANALYSIS_MARKER}
+        if short_name(name) in {SSP_MODEL_MARKER, ANALYSIS_MARKER, FMU_MODEL_MARKER}
     }
     for marker in sorted(used):
         if marker not in architecture.part_definitions:
@@ -234,16 +242,18 @@ def read_experiment(
 class RolePolicy:
     """The role vocabulary one consumer recognises.
 
-    ``model_marker`` / ``analysis_marker`` are the names a model comparison may
-    need (``None`` when the consumer has no such marker); the predicates are what
-    the traversal layers call. :data:`SSP_ROLES` is the SSP vocabulary and the
-    default everywhere a policy is optional.
+    ``model_marker`` / ``analysis_marker`` / ``fmu_model_marker`` are the names a
+    model comparison may need (``None`` when the consumer has no such marker);
+    the predicates are what the traversal layers call. :data:`SSP_ROLES` is the
+    SSP vocabulary and the default everywhere a policy is optional.
     """
 
     model_marker: str | None = SSP_MODEL_MARKER
     analysis_marker: str | None = ANALYSIS_MARKER
+    fmu_model_marker: str | None = FMU_MODEL_MARKER
     is_model: Callable[[Architecture, PartDefinition | None], bool] = is_ssp_model
     is_analysis: Callable[[Architecture, PartDefinition | None], bool] = is_analysis
+    is_fmu_model: Callable[[Architecture, PartDefinition | None], bool] = is_fmu_model
     model_usage: Callable[
         [Architecture, PartDefinition], tuple[PartUsage, PartDefinition]
     ] = model_usage

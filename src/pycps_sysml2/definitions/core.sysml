@@ -1,6 +1,7 @@
 package PysspCore {
   part def SspModel;
   part def Analysis;
+  part def FmuModel;
 
   port def ParameterInterface;
 

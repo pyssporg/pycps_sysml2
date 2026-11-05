@@ -435,10 +435,17 @@ def validate_parameter_dialect(
             continue
         definition = architecture.resolve_attribute_def(attribute)
         if policy.is_fmu_metadata(architecture, definition):
-            raise ValueError(
-                f"{system.name}.{name} is FMU metadata, but the composition is "
-                "not an FMU component"
-            )
+            if not policy.roles.is_fmu_model(architecture, system):
+                raise ValueError(
+                    f"{system.name}.{name} is FMU metadata, but the composition is "
+                    "not an FMU component"
+                )
+            if system.parts:
+                raise ValueError(
+                    f"{system.name}.{name} is FMU metadata, but the part has "
+                    "subparts; a nested system cannot also be an FMU component"
+                )
+            continue
         if policy.is_ssp_metadata(architecture, definition) and policy.roles.is_analysis(
             architecture, system
         ):

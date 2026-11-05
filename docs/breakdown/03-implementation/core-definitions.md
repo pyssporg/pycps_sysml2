@@ -10,8 +10,9 @@ status: current
 # Core definitions
 
 `src/pycps_sysml2/definitions/core.sysml` is the single copy of the shared
-vocabulary (`package PysspCore`): `SspModel`, `Analysis`, `ParameterInterface`,
-`ParameterSet`, `FmuMetadata`, `SspMetadata`, and `Experiment`.
+vocabulary (`package PysspCore`): `SspModel`, `Analysis`, `FmuModel`,
+`ParameterInterface`, `ParameterSet`, `FmuMetadata`, `SspMetadata`, and
+`Experiment`.
 
 - **Package data:** `pyproject.toml` lists `definitions/*.sysml`, so the wheel
   carries the file; `core_definitions()` returns it as a real `Path` and

@@ -21,6 +21,7 @@ from tests.testhelpers import write_model
 CORE_NAMES = {
     "SspModel",
     "Analysis",
+    "FmuModel",
     "ParameterInterface",
     "ParameterSet",
     "FmuMetadata",
@@ -81,7 +82,11 @@ def test_core_definitions_parses_as_the_core_package() -> None:
     architecture = load(core_definitions())
 
     assert architecture.package_name == "PysspCore"
-    assert list(architecture.part_definitions) == ["SspModel", "Analysis"]
+    assert list(architecture.part_definitions) == [
+        "SspModel",
+        "Analysis",
+        "FmuModel",
+    ]
     assert list(architecture.port_definitions) == ["ParameterInterface"]
     assert list(architecture.attribute_definitions) == [
         "ParameterSet",
@@ -209,6 +214,7 @@ def test_export_declared_omits_included_definitions(tmp_path) -> None:
 
     assert "part def SspModel;" not in text
     assert "part def Analysis;" not in text
+    assert "part def FmuModel;" not in text
     assert "port def ParameterInterface;" not in text
     assert "attribute def ParameterSet;" not in text
     assert "attribute def FmuMetadata {" not in text
