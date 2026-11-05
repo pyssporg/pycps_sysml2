@@ -1,0 +1,480 @@
+"""Configuration derivation, selection parsing, and per-analysis plans.
+
+The generator-calling half of the originating suite stays with the artifacts
+that own it; this file is the model/logic level only. Every entry point
+receives the SSP role vocabulary explicitly.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+from pycps_sysml2.metadata import SSP_ROLES
+from pycps_sysml2.model import Architecture, load
+from pycps_sysml2.parameters.configuration import (
+    configuration_name,
+    derived_selection,
+    model_root,
+)
+from pycps_sysml2.parameters.selection import (
+    AnalysisPlan,
+    analysis_plans,
+    analysis_selection,
+    analysis_selections,
+    parse_selection,
+)
+from pycps_sysml2.parameters.variation import resolve_selected
+from tests.fixture_files import fixture_text
+from tests.testhelpers import write_model
+
+
+def _load(tmp_path: Path):
+    path = tmp_path / "selection.sysml"
+    write_model(path, fixture_text("selection/selection.sysml"))
+    return path, load(path)
+
+
+def _load_text(tmp_path: Path, content: str) -> Architecture:
+    path = tmp_path / "configuration.sysml"
+    write_model(path, content)
+    return load(path)
+
+
+def _plans(tmp_path: Path):
+    _, architecture = _load(tmp_path)
+    return {plan.name: plan for plan in analysis_plans(architecture, roles=SSP_ROLES)}
+
+
+def test_parse_selection_accepts_the_cli_language() -> None:
+    assert parse_selection("source=step; path.inner=gain") == {
+        "source": "step",
+        "path.inner": "gain",
+    }
+    assert parse_selection("  ") == {}
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("source", "expected 'key=variant'"),
+        ("=step", "key and variant must both be non-empty"),
+        ("source=", "key and variant must both be non-empty"),
+        ("source=step;source=sine", "names variation point 'source' twice"),
+    ],
+)
+def test_parse_selection_rejects_malformed_text(text: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        parse_selection(text)
+
+
+def test_model_root_is_the_outermost_composition(tmp_path: Path) -> None:
+    _, architecture = _load(tmp_path)
+
+    root = architecture.part_definitions["System"]
+    nested = architecture.part_definitions["NestedGainSystem"]
+
+    assert model_root(architecture, root, roles=SSP_ROLES) is root
+    assert model_root(architecture, nested, roles=SSP_ROLES) is architecture.part_definitions[
+        "PathSystem"
+    ]
+    assert configuration_name(architecture, "step_single", roles=SSP_ROLES) == "StepSingleSystem"
+    assert configuration_name(architecture, "plain", roles=SSP_ROLES) is None
+
+
+def test_derived_selection_reads_a_simple_configuration(tmp_path: Path) -> None:
+    _, architecture = _load(tmp_path)
+
+    assert analysis_selection(architecture, "step_single", roles=SSP_ROLES) == {
+        "source": "stepImplementation",
+        "gain": "singleStage",
+    }
+
+
+def test_derived_selection_descends_into_nested_points(tmp_path: Path) -> None:
+    _, architecture = _load(tmp_path)
+
+    assert derived_selection(architecture, "nested_gain", roles=SSP_ROLES) == {
+        "path": "nestedPath",
+        "path.inner_stage": "gainStage",
+    }
+
+
+def test_derived_selection_reads_an_analysis_attribute_point(tmp_path: Path) -> None:
+    _, architecture = _load(tmp_path)
+
+    assert derived_selection(architecture, "nominal", roles=SSP_ROLES) == {"scenario": "nominalK3"}
+
+
+def test_derived_selection_is_empty_for_the_plain_root(tmp_path: Path) -> None:
+    _, architecture = _load(tmp_path)
+
+    assert derived_selection(architecture, "plain", roles=SSP_ROLES) == {}
+    assert analysis_selection(architecture, "plain", roles=SSP_ROLES) == {}
+
+
+def test_derived_selection_recurses_through_three_levels(tmp_path: Path) -> None:
+    architecture = _load_text(tmp_path, fixture_text("selection/deep-nesting.sysml"))
+
+    assert derived_selection(architecture, "deep", roles=SSP_ROLES) == {
+        "top": "b",
+        "top.inner": "b1",
+        "top.inner.deeper": "c1",
+    }
+
+
+def test_derived_selection_rejects_an_unbound_inner_point(tmp_path: Path) -> None:
+    _, architecture = _load(tmp_path)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "variation point 'StageChoice' at 'path.inner_stage' is not selected; "
+            "bind it in configuration 'NestedUnboundSystem'"
+        ),
+    ):
+        derived_selection(architecture, "nested_unbound", roles=SSP_ROLES)
+
+
+def test_derived_selection_rejects_an_unknown_variant(tmp_path: Path) -> None:
+    architecture = _load_text(tmp_path, fixture_text("selection/unknown-variant.sysml"))
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Unknown variant 'missing' for variation point 'SourceChoice' at "
+            "'source' in configuration 'BadSystem'; expected one of step"
+        ),
+    ):
+        derived_selection(architecture, "bad", roles=SSP_ROLES)
+
+
+def test_derived_selection_rejects_a_non_point_redefinition(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(tmp_path, fixture_text("selection/non-point.sysml"))
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "redefinition target 'gain' in configuration 'BadSystem' is not a "
+            "variation point in 'System'"
+        ),
+    ):
+        derived_selection(architecture, "bad", roles=SSP_ROLES)
+
+
+def test_plans_classify_legal_violated_and_invalid(tmp_path: Path) -> None:
+    plans = _plans(tmp_path)
+
+    assert "Analysis" not in plans, "the role marker is not an analysis"
+    assert set(plans) == {
+        "step_single",
+        "sine_two",
+        "broken",
+        "nested_gain",
+        "nested_unbound",
+        "nominal",
+        "plain",
+    }
+
+    assert plans["step_single"].status == "legal"
+    assert plans["step_single"].legal is True
+    assert plans["step_single"].configuration == "StepSingleSystem"
+    assert plans["step_single"].canonical == {
+        "sut.source": "stepImplementation",
+        "sut.gain": "singleStage",
+    }
+
+    assert plans["nested_gain"].status == "legal"
+    assert plans["nested_gain"].configuration == "NestedGainSystem"
+    assert plans["nested_gain"].canonical == {
+        "sut.path": "nestedPath",
+        "sut.path.inner_stage": "gainStage",
+    }
+
+    assert plans["nominal"].status == "legal"
+    assert plans["nominal"].selection == {"scenario": "nominalK3"}
+
+    assert plans["plain"].status == "legal"
+    assert plans["plain"].configuration is None
+    assert plans["plain"].selection == {}
+
+    assert plans["sine_two"].status == "violated"
+    assert "requiresSingleStage fail" in (plans["sine_two"].detail or "")
+
+    assert plans["broken"].status == "invalid"
+    assert "variation point 'SourceChoice' at 'source' is not selected" in (
+        plans["broken"].detail or ""
+    )
+    assert plans["broken"].configuration is None
+
+    assert plans["nested_unbound"].status == "invalid"
+    assert (
+        "variation point 'StageChoice' at 'path.inner_stage' is not selected"
+        in (plans["nested_unbound"].detail or "")
+    )
+    assert plans["nested_unbound"].configuration == "NestedUnboundSystem"
+
+
+def test_a_configuration_is_judged_by_its_inherited_assert(
+    tmp_path: Path,
+) -> None:
+    _, architecture = _load(tmp_path)
+    plans = {plan.name: plan for plan in analysis_plans(architecture, roles=SSP_ROLES)}
+
+    for name in ("StepSingleSystem", "SineTwoSystem"):
+        assert architecture.part_definitions[name].constraints == []
+    system = architecture.part_definitions["System"]
+    assert [usage.name for usage in system.constraints] == ["requiresSingleStage"]
+
+    assert plans["step_single"].status == "legal"
+    assert plans["sine_two"].status == "violated"
+    assert "requiresSingleStage fail" in (plans["sine_two"].detail or "")
+
+
+def test_a_definition_specialising_two_ssp_models_is_rejected(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(tmp_path, fixture_text("selection/chain-errors.sysml"))
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "Definition 'Linear' specialises more than one SspModel definition "
+            "(FirstRoot, SecondRoot); a configuration chain must be linear."
+        ),
+    ):
+        derived_selection(architecture, "linear", roles=SSP_ROLES)
+
+
+def test_a_definition_whose_supertype_is_not_ssp_model_is_rejected(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(tmp_path, fixture_text("selection/chain-errors.sysml"))
+    orphan = architecture.part_definitions["Orphan"]
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "Definition 'Orphan' specialises 'Helper', which is not marked "
+            "SspModel; a configuration chain must specialise the root "
+            "composition."
+        ),
+    ):
+        model_root(architecture, orphan, roles=SSP_ROLES)
+
+
+def test_a_usage_redefining_two_features_is_rejected(tmp_path: Path) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/multi-redefine.sysml")
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "usage 'both' in configuration 'BadSystem' redefines more than one "
+            "feature (source, gain); bind exactly one variation point."
+        ),
+    ):
+        derived_selection(architecture, "bad", roles=SSP_ROLES)
+
+
+def test_a_qualified_binding_must_name_the_points_definition(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/binding-errors.sysml")
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "binding 'OtherChoice::thing' for variation point 'SourceChoice' at "
+            "'source' names type 'OtherChoice'; expected 'SourceChoice'"
+        ),
+    ):
+        derived_selection(architecture, "wrong_type", roles=SSP_ROLES)
+
+
+def test_an_unqualified_binding_must_name_a_local_usage(tmp_path: Path) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/binding-errors.sysml")
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "binding 'missingUsage' for variation point 'SourceChoice' at "
+            "'source' names no part usage in configuration 'NoLocalSystem'"
+        ),
+    ):
+        derived_selection(architecture, "no_local", roles=SSP_ROLES)
+
+
+def test_a_local_usage_must_specialise_one_variant(tmp_path: Path) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/binding-errors.sysml")
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "part usage 'local' in configuration 'NoSubsetSystem' must specialise "
+            "exactly one variant of 'SourceChoice'; found 0"
+        ),
+    ):
+        derived_selection(architecture, "no_subset", roles=SSP_ROLES)
+
+
+def test_a_local_usage_specialising_two_variants_is_rejected(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/binding-errors.sysml")
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "part usage 'local' in configuration 'TwoSubsetSystem' must "
+            "specialise exactly one variant of 'SourceChoice'; found 2"
+        ),
+    ):
+        derived_selection(architecture, "two_subsets", roles=SSP_ROLES)
+
+
+def test_a_local_usage_must_specialise_a_variant_of_the_point(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/binding-errors.sysml")
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "part usage 'local' in configuration 'NotVariantSystem' specialises "
+            "'OtherChoice::thing', which is not a variant of 'SourceChoice'"
+        ),
+    ):
+        derived_selection(architecture, "not_variant", roles=SSP_ROLES)
+
+
+def test_an_unknown_variant_is_rejected_in_a_nested_scope(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/nested-unknown-variant.sysml")
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "Unknown variant 'missing' for variation point 'BChoice' at "
+            "'top.inner' in configuration 'Config'; expected one of b1."
+        ),
+    ):
+        derived_selection(architecture, "conf", roles=SSP_ROLES)
+
+
+def test_a_more_derived_configuration_overrides_an_inherited_binding(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(tmp_path, fixture_text("selection/rebinding.sysml"))
+
+    assert derived_selection(architecture, "direct", roles=SSP_ROLES) == {"path": "directPath"}
+
+
+def test_an_attribute_configuration_rejects_an_unknown_variant(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/attribute-binding.sysml")
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Unknown variant 'missing' for variation point 'ScenarioChoice' at "
+            "'scenario' in configuration 'BadConfigured'"
+        ),
+    ):
+        derived_selection(architecture, "bad", roles=SSP_ROLES)
+
+
+def test_a_model_attribute_binding_resolves_on_the_root(tmp_path: Path) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/attribute-binding.sysml")
+    )
+
+    resolved, canonical = resolve_selected(
+        architecture, "Root", {"scenario": "nominalK3"}, roles=SSP_ROLES
+    )
+
+    assert canonical == {"scenario": "nominalK3"}
+    assert (
+        resolved.part_definitions["Root"].attributes["scenario"].type_name
+        == "ScenarioK3"
+    )
+
+
+def test_attribute_ambiguity_still_fires_for_distinct_usages(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/attribute-ambiguous.sysml")
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Selection key 'mode' is ambiguous.*'mode', 'inner.x.mode'",
+    ):
+        resolve_selected(architecture, "System", {"mode": "anything"}, roles=SSP_ROLES)
+
+
+def test_analysis_selections_keeps_declaration_order(tmp_path: Path) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/analysis-order.sysml")
+    )
+
+    selections = analysis_selections(architecture, roles=SSP_ROLES)
+
+    assert list(selections) == ["one", "second", "plain"]
+    assert selections == {
+        "one": {"source": "step"},
+        "second": {"source": "sine"},
+        "plain": {},
+    }
+
+
+def test_an_analysis_plan_rejects_an_unknown_status() -> None:
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "Unknown analysis plan status 'bogus'; expected one of legal, "
+            "violated, invalid"
+        ),
+    ):
+        AnalysisPlan("analysis", {}, "bogus")
+
+
+def test_a_plan_marks_a_resolution_failure_invalid_and_keeps_the_selection(
+    tmp_path: Path,
+) -> None:
+    architecture = _load_text(
+        tmp_path, fixture_text("selection/unresolvable-variant.sysml")
+    )
+    plan = next(plan for plan in analysis_plans(architecture, roles=SSP_ROLES) if plan.name == "bad")
+
+    assert plan.status == "invalid"
+    assert plan.selection == {"source": "step"}
+    assert plan.canonical is None
+    assert (
+        "Selected variant 'step' of variation point 'SourceChoice' has type "
+        "'MissingType', which is not a part definition"
+    ) in (plan.detail or "")
+
+

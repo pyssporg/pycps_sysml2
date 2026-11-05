@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pycps_sysml2"
+dynamic = ["version"]
+description = "The SysML dialect layer for CPS artifacts: parser, IR, variation, selection, constraints, and marker/metadata accessors."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "pyssp contributors" }
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+]
+# One runtime dependency, pinned hard. `sysmlpy` owns the SysML v2 grammar and
+# the parse tree; its internal grammar module paths are used directly, so a pin
+# bump is a dialect decision (see docs/breakdown/03-implementation/sysmlpy-pin.md).
+dependencies = [
+    "sysmlpy==0.96.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ruff",
+  "build",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = { attr = "pycps_sysml2.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pycps_sysml2*"]
+
+[tool.ruff]
+# Lint selection is explicit so a ruff upgrade cannot change the gate.
+lint.select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "static: inspects source or files without executing the package",
+    "unit: one object's behaviour, no generated artifact",
+    "component: a generated artifact is the unit under test",
+    "contract: two directions must agree (round-trip, sync)",
+    "system: the CLI is driven end to end",
+    "slow: not part of the default CI subset",
+]

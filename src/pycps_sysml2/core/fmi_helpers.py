@@ -1,0 +1,79 @@
+"""Utility helpers for FMI type and value mapping.
+
+Mostly layout-free: it maps SysML primitive names onto FMI primitive names and
+formats a Python value as the FMI text for a primitive. The one exception is
+:func:`~.fmu_filename` / :func:`~.fmu_resource_path`, kept verbatim from the
+library this was extracted from; the resource path is SSP-archive-relative
+naming and a candidate to move out of this module (v0.2.0).
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+
+def fmu_filename(modelica_class: str) -> str:
+    """Return the FMU filename for a fully-qualified Modelica class."""
+    return modelica_class.replace(".", "_") + ".fmu"
+
+
+def fmu_resource_path(modelica_class: str) -> str:
+    """Return the SSP resources relative path for an FMU."""
+    return f"resources/{fmu_filename(modelica_class)}"
+
+
+FMI_TYPE_MAP = {
+    "real": "Real",
+    "float": "Real",
+    "float32": "Real",
+    "float64": "Real",
+    "double": "Real",
+    "integer": "Integer",
+    "int": "Integer",
+    "int8": "Integer",
+    "int32": "Integer",
+    "uint8": "Integer",
+    "uint32": "Integer",
+    "boolean": "Boolean",
+    "bool": "Boolean",
+    "string": "String",
+}
+
+
+def map_fmi_type(type_name: Optional[str], default: str = "Real") -> str:
+    """Return a canonical primitive name (Real/Integer/Boolean/String) for SysML types."""
+    if not type_name:
+        return default
+    key = type_name.strip()
+    # Support list syntax like List[Integer] by mapping the element primitive.
+    if key.startswith("List[") and key.endswith("]"):
+        key = key[len("List[") : -1].strip()
+    key = key.lower()
+    return FMI_TYPE_MAP.get(key, default)
+
+
+def format_value(tag: str, literal):
+    if literal is None:
+        return ""
+    if tag == "Real":
+        number = float(literal)
+        if number.is_integer():
+            return f"{number:g}"
+        # Shortest representation that round-trips to the same float: a value
+        # authored at full precision must reach the artifact unchanged.
+        return repr(number)
+    if tag == "Integer":
+        return str(int(literal))
+    if tag == "Boolean":
+        return "true" if bool(literal) else "false"
+    if tag == "String":
+        return str(literal)
+    raise Exception("[format_value] Unknown tag")
+
+
+def to_fmi_direction_definition(dir: str):
+    if dir == "in":
+        return "input"
+    elif dir == "out":
+        return "output"
+    raise Exception("Direction conversion is unknown")
