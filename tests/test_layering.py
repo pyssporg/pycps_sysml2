@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import COLLECTED_LEVELS, MIXED_FILES, MIXED_LEVELS
+from conftest import COLLECTED_LEVELS, FILE_LEVELS, MIXED_FILES, MIXED_LEVELS
 
 PROJECT = Path(__file__).resolve().parents[1]
 SRC = PROJECT / "src"
@@ -124,7 +124,7 @@ def test_every_collected_test_declares_exactly_one_level(
 
     unused = [
         name
-        for name in sorted(MIXED_FILES)
-        if not any(node.split("::", 1)[0].endswith(name) for node in collected)
+        for name in sorted(FILE_LEVELS)
+        if not (Path(__file__).resolve().parent / name).is_file()
     ]
-    assert not unused, f"mixed file entries with no collected tests: {unused}"
+    assert not unused, f"FILE_LEVELS names files that do not exist: {unused}"
