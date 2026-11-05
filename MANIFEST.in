@@ -1,0 +1,1 @@
+recursive-include src/pycps_sysml2/definitions *.sysml

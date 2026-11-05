@@ -16,6 +16,7 @@ surface as ``resolve_part``/``resolve_port`` returning ``None`` in consumers.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from pycps_sysml2.model.model import (
@@ -54,19 +55,61 @@ from pycps_sysml2.model.variation import VariationFacts, variation_facts
 __all__ = ["load"]
 
 
-def load(path: Path | str) -> Architecture:
-    """Load a ``.sysml`` file or a directory of them into an Architecture.
+_DEFINITION_ATTRIBUTES = (
+    ("part", "part_definitions"),
+    ("port", "port_definitions"),
+    ("attribute", "attribute_definitions"),
+    ("requirement", "requirement_definitions"),
+    ("constraint", "constraint_definitions"),
+)
 
-    A file loads exactly that file; a directory loads its ``*.sysml`` files
-    non-recursively in sorted name order, and every file must declare the
-    same package. Each file is parsed by sysmlpy separately (never as one
-    merged multi-file load) so definitions keep per-file ``source_file``
+
+def load(
+    path: Path | str | Sequence[Path | str],
+    *includes: Path | str,
+) -> Architecture:
+    """Load one primary architecture root plus any number of included roots.
+
+    ``path`` is either one root or a sequence whose first element is the
+    primary model root; any further sequence elements and ``*includes`` are
+    included roots. A root is a ``.sysml`` file or a directory of them. A file
+    loads exactly that file; a directory loads its ``*.sysml`` files
+    non-recursively in sorted name order. The primary model's files must
+    declare the same package. Each file is parsed by sysmlpy separately (never
+    as one merged multi-file load) so definitions keep per-file ``source_file``
     tracking and cross-file duplicates can be reported precisely.
+
+    Included roots are opt-in: with none, ``load(primary)`` loads exactly the
+    primary's definitions and leaves the behaviour unchanged. An included root
+    merges shared definitions and need not use the model's package name,
+    because it supplies definitions rather than composition; the exemption is
+    the package name only. A definition the model already declares is an
+    error, never an override, and so is one name supplied by two included
+    roots. Every name from an included root is recorded on
+    :attr:`Architecture.included_definitions`.
     """
-    files = _resolve_files(Path(path))
+    entries = [path] if isinstance(path, (str, Path)) else list(path)
+    if not entries:
+        raise ValueError("load() requires a primary model root")
+    include_entries = [Path(entry) for entry in entries[1:]]
+    include_entries.extend(Path(entry) for entry in includes)
+
+    files = _resolve_files(Path(entries[0]))
     architecture = _architecture_from(files[0])
     for file in files[1:]:
         _merge_file(architecture, file)
+
+    included_files = [
+        (file, root)
+        for root in include_entries
+        for file in _resolve_files(root)
+    ]
+    if included_files:
+        _merge_included(
+            architecture,
+            included_files,
+            _definition_origins(architecture, files),
+        )
     return architecture
 
 
@@ -88,6 +131,19 @@ def _resolve_files(path: Path) -> list[Path]:
             raise FileNotFoundError(f"No .sysml files found under {path}")
         return files
     raise FileNotFoundError(f"No .sysml file found under {path}")
+
+
+def _definition_origins(
+    architecture: Architecture, files: list[Path]
+) -> dict[str, Path]:
+    """Map every primary-model definition name to the file that declares it."""
+    by_name = {file.name: file for file in files}
+    origins: dict[str, Path] = {}
+    for _, attribute in _DEFINITION_ATTRIBUTES:
+        for name, definition in getattr(architecture, attribute).items():
+            source = definition.source_file or ""
+            origins[name] = by_name.get(source, Path(source or "<unknown>"))
+    return origins
 
 
 # -- per-file loading and merging ------------------------------------------
@@ -112,6 +168,27 @@ def _merge_file(architecture: Architecture, file: Path) -> None:
     _merge_packages(architecture, packages, file, variation, source)
 
 
+def _merge_included(
+    architecture: Architecture,
+    files: list[tuple[Path, Path]],
+    model_origins: dict[str, Path],
+) -> None:
+    """Merge included roots' definitions, ignoring their package names."""
+    origins: dict[str, Path] = {}
+    for file, root in files:
+        packages, variation, source = _parse_file(file)
+        _merge_packages(
+            architecture,
+            packages,
+            file,
+            variation,
+            source,
+            include=root,
+            model_origins=model_origins,
+            origins=origins,
+        )
+
+
 def _parse_file(file: Path) -> tuple[list, VariationFacts, str]:
     """Parse one file: its package(s), variation facts, and source text.
 
@@ -129,34 +206,68 @@ def _merge_packages(
     file: Path,
     variation: VariationFacts,
     source: str,
+    *,
+    include: Path | None = None,
+    model_origins: dict[str, Path] | None = None,
+    origins: dict[str, Path] | None = None,
 ) -> None:
     """Add every definition of one file's package(s) to the architecture.
 
     Top-level usages and other non-definition children are skipped silently
     (legacy parity). Definitions are added parts first, then ports, then
     attribute definitions, then requirements, then constraint definitions.
+    For an included root, ``include`` names the root and ``model_origins`` /
+    ``origins`` map every definition name to its declaring file.
     """
     constraint_bodies = constraint_definitions_from_source(source)
     for package in packages:
         for element in package.parts:
             if element.is_definition:
                 part_def = _part_definition(element, file, variation)
-                _add_definition(architecture, architecture.add_part_def, part_def, file)
+                _add_definition(
+                    architecture,
+                    architecture.add_part_def,
+                    part_def,
+                    file,
+                    include=include,
+                    model_origins=model_origins,
+                    origins=origins,
+                )
         for element in package.ports:
             if element.is_definition:
                 port_def = _port_definition(element, file)
-                _add_definition(architecture, architecture.add_port_def, port_def, file)
+                _add_definition(
+                    architecture,
+                    architecture.add_port_def,
+                    port_def,
+                    file,
+                    include=include,
+                    model_origins=model_origins,
+                    origins=origins,
+                )
         for element in package.attributes:
             if element.is_definition:
                 attribute_def = _attribute_definition(element, file, variation)
                 _add_definition(
-                    architecture, architecture.add_attribute_def, attribute_def, file
+                    architecture,
+                    architecture.add_attribute_def,
+                    attribute_def,
+                    file,
+                    include=include,
+                    model_origins=model_origins,
+                    origins=origins,
                 )
         for element in package.requirements:
             if element.is_definition:
                 requirement_def = _requirement_definition(element, file)
                 _add_definition(
-                    architecture, architecture.add_requirement_def, requirement_def, file
+                    architecture,
+                    architecture.add_requirement_def,
+                    requirement_def,
+                    file,
+                    include=include,
+                    model_origins=model_origins,
+                    origins=origins,
                 )
         for element in package.constraints:
             if element.is_definition:
@@ -164,17 +275,75 @@ def _merge_packages(
                     element, file, constraint_bodies
                 )
                 _add_definition(
-                    architecture, architecture.add_constraint_def, constraint_def, file
+                    architecture,
+                    architecture.add_constraint_def,
+                    constraint_def,
+                    file,
+                    include=include,
+                    model_origins=model_origins,
+                    origins=origins,
                 )
 
 
-def _add_definition(architecture: Architecture, add, definition, file: Path) -> None:
+def _add_definition(
+    architecture: Architecture,
+    add,
+    definition,
+    file: Path,
+    *,
+    include: Path | None = None,
+    model_origins: dict[str, Path] | None = None,
+    origins: dict[str, Path] | None = None,
+) -> None:
     """Add a definition, re-raising duplicates with file context (legacy parity)."""
+    if include is not None:
+        _reject_included_duplicate(
+            architecture,
+            definition,
+            include,
+            model_origins or {},
+            origins or {},
+        )
     try:
         add(definition)
     except ValueError:
         kind = type(definition).__name__.removesuffix("Definition").lower()
         raise ValueError(f"Duplicate {kind} definition for {definition.name} in {file}") from None
+    if include is not None:
+        architecture.included_definitions.add(definition.name)
+        if origins is not None:
+            origins[definition.name] = include
+
+
+def _reject_included_duplicate(
+    architecture: Architecture,
+    definition,
+    include: Path,
+    model_origins: dict[str, Path],
+    origins: dict[str, Path],
+) -> None:
+    """Reject an included definition the model or another root supplies."""
+    for kind, attribute in _DEFINITION_ATTRIBUTES:
+        existing = getattr(architecture, attribute).get(definition.name)
+        if existing is None:
+            continue
+        definition_kind = type(definition).__name__.removesuffix("Definition").lower()
+        if definition.name in model_origins:
+            existing_path = model_origins[definition.name]
+            raise ValueError(
+                f"Included {definition_kind} def '{definition.name}' from {include} "
+                f"conflicts with the {kind} def declared in {existing_path}; "
+                f"remove the local declaration of '{definition.name}' from "
+                f"{existing_path} to use the included definition."
+            )
+        existing_include = origins.get(
+            definition.name, Path(existing.source_file or "<unknown>")
+        )
+        raise ValueError(
+            f"Included {definition_kind} def '{definition.name}' from {include} "
+            f"conflicts with the {kind} def already supplied by {existing_include}; "
+            "a name may come from only one included root."
+        )
 
 
 # -- definition builders ----------------------------------------------------

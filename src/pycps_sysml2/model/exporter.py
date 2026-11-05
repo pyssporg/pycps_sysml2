@@ -309,6 +309,8 @@ def export_declared(architecture: Architecture) -> dict[str, str]:
 
     def collect(definitions) -> None:
         for definition in sorted(definitions, key=lambda d: d.name):
+            if definition.name in architecture.included_definitions:
+                continue
             file_name = definition.source_file or DEFAULT_SOURCE_FILE
             groups.setdefault(file_name, []).append(definition)
 

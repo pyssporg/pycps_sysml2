@@ -10,6 +10,7 @@ gives one object to reach the dialect from:
 - :mod:`pycps_sysml2.parameters` — variation, selection, constraints, dialect.
 """
 
+from pycps_sysml2.definitions import core_definitions
 from pycps_sysml2.model import (
     Architecture,
     Attribute,
@@ -56,6 +57,7 @@ __all__ = [
     "VariantMember",
     "__version__",
     "core",
+    "core_definitions",
     "endpoint_text",
     "load",
     "metadata",

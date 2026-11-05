@@ -37,3 +37,8 @@ metadata recognizers plus the retired and flat-connector rejections, and
 exported as defaults (`SSP_MODEL_MARKER`, `ANALYSIS_MARKER`, the `Parameter*`
 names), so a caller that wants the default writes nothing; a caller that wants
 another domain constructs the policy (INFO-003).
+
+**Core vocabulary.** The seven markers and metadata schemas in the table ship in
+one packaged file, `definitions/core.sysml`; a model loads it as one included
+root with `load(model, core_definitions())` instead of declaring the names
+itself (INFO-012).

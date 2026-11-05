@@ -389,6 +389,9 @@ class Architecture:
 
     Member dicts are insertion-ordered; ``connections`` is keyed by
     ``Connection.key`` (``"src.src_port->dst.dst_port"``).
+
+    ``included_definitions`` holds the names supplied by included roots, not
+    authored in the model. Consumers such as the exporter skip them.
     """
 
     package_name: str
@@ -401,6 +404,7 @@ class Architecture:
     constraint_definitions: dict[str, ConstraintDefinition] = field(
         default_factory=dict
     )
+    included_definitions: set[str] = field(default_factory=set)
 
     # -- lookups -----------------------------------------------------------
 

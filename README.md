@@ -98,6 +98,37 @@ exact policy argument: every public entry point under `parameters/` requires it
 and supplies no default. `SSP_POLICY.roles` is `SSP_ROLES`; another domain
 constructs its own `RolePolicy` or `DialectPolicy`.
 
+## Multi-root loading and core definitions
+
+`load()` takes one primary model root plus any number of included definition
+roots:
+
+```python
+import pycps_sysml2
+
+architecture = load("plant.sysml", pycps_sysml2.core_definitions())
+architecture = load(["plant.sysml", "shared/vocabulary"], "another/file.sysml")
+```
+
+`path` is either one root or a sequence whose first element is the primary
+model root; further sequence elements and `*includes` are included roots. A
+root is a `.sysml` file or a directory of them. With no includes,
+`load(primary)` behaves exactly as before: the primary's files must share one
+package name.
+
+An included root merges definitions and may use any package name, because it
+supplies vocabulary rather than composition. A definition the model already
+declares is a `ValueError` naming the definition, its kind, both sources, and
+the local declaration to remove; one name supplied by two included roots is
+also an error and names both roots. Merged names are recorded in
+`Architecture.included_definitions` and excluded from `export_declared()`.
+
+`core_definitions()` returns the packaged `definitions/core.sysml`
+(`package PysspCore`): `SspModel`, `Analysis`, `ParameterInterface`,
+`ParameterSet`, `FmuMetadata`, `SspMetadata`, and `Experiment`. It is one
+possible include, not a special case. The wheel carries the file as package
+data.
+
 ## Errors and limits
 
 - `load()` raises `FileNotFoundError` for a missing path or an empty directory,

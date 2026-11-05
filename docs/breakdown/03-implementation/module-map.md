@@ -18,7 +18,8 @@ dataclasses.
 | `model/names.py`, `model/exporter.py` | name quoting and unquoting; SysML text emission | `model.model` |
 | `model/parser.py` | one file to declarations: values, endpoints, directions, multiplicity, supertypes, constraint text | `sysmlpy`, `model.names`, `model.model` |
 | `model/variation.py` | the raw ANTLR walk: variation points, variants, configuration bodies | `sysmlpy`, `model.model` |
-| `model/loader.py` | file walk, package merge, variation facts, IR construction | all of `model` |
+| `model/loader.py` | primary-root file walk and package merge, included-root merge, variation facts, IR construction, duplicate rejection | all of `model` |
+| `definitions/` | the packaged core vocabulary and `core_definitions()` | stdlib |
 | `core/control.py`, `core/fmi_helpers.py` | control attributes with injectable prefix and retired map; FMI helpers | `model` |
 | `metadata/helpers.py` | the single copy of `short_name`, `specializes_marker`, `effective_members` | `model` |
 | `metadata/roles.py`, `metadata/ssp_metadata.py`, `metadata/fmu_metadata.py` | role policy, SSP metadata, FMI metadata | `model`, `core`, `metadata.helpers` |
