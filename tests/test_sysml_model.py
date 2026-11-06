@@ -68,6 +68,95 @@ def test_load_directory_merges_sorted_files(tmp_path) -> None:
     assert "part def Alpha" in exported["b.sysml"]
 
 
+def test_multi_file_load_parses_all_roots_in_one_call(tmp_path, monkeypatch) -> None:
+    """Same-package files merge inside one sysmlpy load, not file by file."""
+    architecture_dir = tmp_path / "arch"
+    write_model(
+        architecture_dir / "a.sysml",
+        fixture_text("sysml-model/merge-a.sysml"),
+    )
+    write_model(
+        architecture_dir / "b.sysml",
+        fixture_text("sysml-model/merge-b.sysml"),
+    )
+
+    from pycps_sysml2.model import loader
+
+    calls = []
+    original = loader.parse_files
+
+    def recording(paths):
+        calls.append(list(paths))
+        return original(paths)
+
+    monkeypatch.setattr(loader, "parse_files", recording)
+
+    architecture = load(architecture_dir)
+
+    assert calls == [[architecture_dir / "a.sysml", architecture_dir / "b.sysml"]]
+    assert list(architecture.part_definitions) == ["Zed", "Alpha"]
+    assert architecture.part_definitions["Zed"].source_file == "a.sysml"
+    assert architecture.part_definitions["Alpha"].source_file == "b.sysml"
+
+
+def test_attribution_is_exact_across_definition_kinds(tmp_path) -> None:
+    """The per-file attribution pass keeps every kind on its declaring file."""
+    architecture_dir = tmp_path / "arch"
+    write_model(
+        architecture_dir / "a.sysml",
+        """
+        package Shared {
+          part def A;
+          requirement def RA {
+            doc /* from a */
+          }
+          constraint def CA {
+            in x : Real;
+            x > 0
+          }
+        }
+        """,
+    )
+    write_model(
+        architecture_dir / "b.sysml",
+        """
+        package Shared {
+          part def B;
+          port def P;
+          attribute def V;
+        }
+        """,
+    )
+
+    architecture = load(architecture_dir)
+
+    assert architecture.part_definitions["A"].source_file == "a.sysml"
+    assert architecture.part_definitions["B"].source_file == "b.sysml"
+    assert architecture.port_definitions["P"].source_file == "b.sysml"
+    assert architecture.attribute_definitions["V"].source_file == "b.sysml"
+    assert architecture.requirement_definitions["RA"].source_file == "a.sysml"
+    assert architecture.constraint_definitions["CA"].source_file == "a.sysml"
+
+
+def test_primary_file_with_two_packages_fails(tmp_path) -> None:
+    """The primary root still has to resolve to one package name."""
+    model_file = tmp_path / "two.sysml"
+    write_model(
+        model_file,
+        """
+        package One { part def A; }
+        package Two { part def B; }
+        """,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        load(model_file)
+
+    assert str(excinfo.value) == (
+        f"Expected one package per file, found One, Two in {model_file}"
+    )
+
+
 def test_missing_path_raises_file_not_found(tmp_path) -> None:
     """A missing path raises the FileNotFoundError sync.py bootstraps from."""
     missing = tmp_path / "missing.sysml"

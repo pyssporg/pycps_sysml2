@@ -130,7 +130,7 @@ def fmu_metadata(
             "a nested system cannot also be an FMU component"
         )
 
-    marker = architecture.attribute_definitions.get(FMU_METADATA_MARKER)
+    marker = architecture.resolve_attribute_def(FMU_METADATA_MARKER)
     if marker is None:
         raise ValueError(
             f"FMU metadata uses missing marker definition '{FMU_METADATA_MARKER}'. "
@@ -172,10 +172,10 @@ def ensure_fmu_metadata_definition(
     architecture: Architecture, source_file: str
 ) -> AttributeDefinition:
     """Create the shared ``FmuMetadata`` schema when it is missing."""
-    existing = architecture.attribute_definitions.get(FMU_METADATA_MARKER)
+    existing = architecture.resolve_attribute_def(FMU_METADATA_MARKER)
     if existing is not None:
         return existing
-    if FMU_METADATA_MARKER in architecture.port_definitions:
+    if architecture.has_definition(architecture.port_definitions, FMU_METADATA_MARKER):
         raise ValueError(
             f"'{FMU_METADATA_MARKER}' is defined as a port def, but FMU metadata "
             "is an attribute def"
@@ -329,7 +329,9 @@ def update_fmu_metadata_from_component(
 
     if not definition.attributes:
         part_def.attributes.pop(usage_name, None)
-        architecture.attribute_definitions.pop(definition.name, None)
+        architecture.attribute_definitions.pop(
+            architecture.stored_key(definition), None
+        )
 
 
 def validate_retired_control_attributes(

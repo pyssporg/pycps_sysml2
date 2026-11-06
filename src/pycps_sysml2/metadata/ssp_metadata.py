@@ -121,7 +121,7 @@ def ssp_metadata(
             f"'{part_def.name}' is not marked ':> SspModel'"
         )
 
-    marker = architecture.attribute_definitions.get(SSP_METADATA_MARKER)
+    marker = architecture.resolve_attribute_def(SSP_METADATA_MARKER)
     if marker is None:
         raise ValueError(
             f"SSP metadata uses missing marker definition '{SSP_METADATA_MARKER}'. "

@@ -16,6 +16,7 @@ from pycps_sysml2.parameters.configuration import (
     configuration_name,
     derived_selection,
     model_root,
+    qualified_type,
     scope_analysis_to_root,
 )
 from pycps_sysml2.parameters.constraints import (
@@ -118,6 +119,7 @@ __all__ = [
     "parameter_port",
     "parameter_sets_for_generation",
     "parse_selection",
+    "qualified_type",
     "refuse_variation_erasure",
     "require_resolved_attribute_variation",
     "resolve",

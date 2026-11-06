@@ -16,6 +16,7 @@ Anything not listed here is language the IR keeps but no marker interprets.
 |---|---|---|---|
 | `part def SspModel` | part def, empty marker | marker | `metadata/roles.py` |
 | `part def Analysis` | part def, empty marker | marker | `metadata/roles.py` |
+| `part def FmuModel` | part def, empty marker | marker | `metadata/roles.py` |
 | `attribute def Experiment` | attribute def | `startTime`, `stopTime`, `stepSize` Real | `metadata/roles.py` |
 | `attribute def SspMetadata` | attribute def | `source` String | `metadata/ssp_metadata.py` |
 | `attribute def FmuMetadata` | attribute def | `source`, `implementation` String | `metadata/fmu_metadata.py` |
@@ -31,9 +32,15 @@ Anything not listed here is language the IR keeps but no marker interprets.
 
 **Ownership boundary.** An implementing library selects a domain by passing
 policy objects, not by re-declaring markers: `RolePolicy` binds the model,
-analysis, and experiment markers and their predicates, `DialectPolicy` adds the
-metadata recognizers plus the retired and flat-connector rejections, and
+analysis, FmuModel, and experiment markers and their predicates, `DialectPolicy`
+adds the metadata recognizers plus the retired and flat-connector rejections, and
 `ControlAttributes` carries the prefix and the retired map. Marker names stay
-exported as defaults (`SSP_MODEL_MARKER`, `ANALYSIS_MARKER`, the `Parameter*`
-names), so a caller that wants the default writes nothing; a caller that wants
-another domain constructs the policy (INFO-003).
+exported as defaults (`SSP_MODEL_MARKER`, `ANALYSIS_MARKER`,
+`FMU_MODEL_MARKER`, the `Parameter*` names), so a caller that wants the default
+writes nothing; a caller that wants another domain constructs the policy
+(INFO-003).
+
+**Core vocabulary.** The eight markers and metadata schemas in the table ship in
+one packaged file, `definitions/core.sysml`; a model loads it as one included
+root with `load(model, core_definitions())` instead of declaring the names
+itself (INFO-012).

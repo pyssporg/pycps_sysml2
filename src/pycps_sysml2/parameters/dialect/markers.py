@@ -75,8 +75,12 @@ def validate_marker_definitions(architecture: Architecture) -> None:
 
     if (
         interface_users
-        and PARAMETER_INTERFACE_MARKER in architecture.attribute_definitions
-        and PARAMETER_INTERFACE_MARKER not in architecture.port_definitions
+        and architecture.has_definition(
+            architecture.attribute_definitions, PARAMETER_INTERFACE_MARKER
+        )
+        and not architecture.has_definition(
+            architecture.port_definitions, PARAMETER_INTERFACE_MARKER
+        )
     ):
         raise ValueError(
             f"'{PARAMETER_INTERFACE_MARKER}' is defined as an attribute def, but "
@@ -86,8 +90,12 @@ def validate_marker_definitions(architecture: Architecture) -> None:
         )
     if (
         set_users
-        and PARAMETER_SET_MARKER in architecture.port_definitions
-        and PARAMETER_SET_MARKER not in architecture.attribute_definitions
+        and architecture.has_definition(
+            architecture.port_definitions, PARAMETER_SET_MARKER
+        )
+        and not architecture.has_definition(
+            architecture.attribute_definitions, PARAMETER_SET_MARKER
+        )
     ):
         raise ValueError(
             f"'{PARAMETER_SET_MARKER}' is defined as a port def, but parameter "
@@ -99,12 +107,16 @@ def validate_marker_definitions(architecture: Architecture) -> None:
     missing: list[tuple[str, str]] = []
     if (
         interface_users
-        and PARAMETER_INTERFACE_MARKER not in architecture.port_definitions
+        and not architecture.has_definition(
+            architecture.port_definitions, PARAMETER_INTERFACE_MARKER
+        )
     ):
         missing.append((PARAMETER_INTERFACE_MARKER, "port def"))
     if (
         set_users
-        and PARAMETER_SET_MARKER not in architecture.attribute_definitions
+        and not architecture.has_definition(
+            architecture.attribute_definitions, PARAMETER_SET_MARKER
+        )
     ):
         missing.append((PARAMETER_SET_MARKER, "attribute def"))
     if missing:

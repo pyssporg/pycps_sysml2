@@ -20,7 +20,9 @@ ROOT_MODULES = frozenset({"__init__.py"})
 #: Domain packages. A new top-level package is a deliberate edit to this list.
 #: Absence is not a layout fault: a package may land in a later extraction step,
 #: so only an *undeclared* directory fails.
-SUBPACKAGES = frozenset({"core", "model", "metadata", "parameters"})
+SUBPACKAGES = frozenset(
+    {"core", "definitions", "model", "metadata", "parameters"}
+)
 
 #: The only module allowed to import the external parser.
 SYMLPY_IMPORT_ALLOWLIST = frozenset({"model/parser.py"})
@@ -31,6 +33,9 @@ SYMLPY_IMPORT = re.compile(r"\s*(?:import|from)\s+sysmlpy\b")
 MAX_MODULE_LINES = 600
 
 LARGE_MODULES: dict[str, str] = {
+    "model/model.py": (
+        "definition dataclasses and the architecture namespace/import resolver"
+    ),
     "model/variation.py": (
         "one raw-tree pass: variation points, configuration bodies, usage extras"
     ),

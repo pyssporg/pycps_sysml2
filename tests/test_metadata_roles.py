@@ -12,6 +12,7 @@ import pytest
 
 from pycps_sysml2.metadata.roles import (
     ANALYSIS_MARKER,
+    FMU_MODEL_MARKER,
     SSP_MODEL_MARKER,
     Experiment,
     analysis_part_definitions,
@@ -19,6 +20,7 @@ from pycps_sysml2.metadata.roles import (
     exportable_part_definitions,
     is_analysis,
     is_experiment_definition,
+    is_fmu_model,
     is_ssp_model,
     model_usage,
     read_experiment,
@@ -57,6 +59,12 @@ VARIATION = """package V {
   part def System :> SspModel {
     variation part source : S;
   }
+}"""
+
+FMU_ROLES = """package FmuRoles {
+  part def FmuModel;
+  part def Generator :> FmuModel;
+  part def Plain;
 }"""
 
 
@@ -103,6 +111,30 @@ def test_validate_role_markers_requires_the_marker_definitions(
         "package P {\n  part def System :> SspModel;\n}",
     )
     with pytest.raises(ValueError, match=f"Role marker '{SSP_MODEL_MARKER}'"):
+        validate_role_markers(undeclared)
+
+
+def test_an_fmu_model_is_recognised_by_its_marker(tmp_path: Path) -> None:
+    architecture = _load(tmp_path, FMU_ROLES)
+
+    validate_role_markers(architecture)
+    assert is_fmu_model(architecture, architecture.get_part_def("Generator"))
+    assert is_fmu_model(
+        architecture, architecture.get_part_def(FMU_MODEL_MARKER)
+    )
+    assert not is_fmu_model(architecture, architecture.get_part_def("Plain"))
+    assert not is_ssp_model(architecture, architecture.get_part_def("Generator"))
+
+
+def test_validate_role_markers_requires_the_fmu_model_marker(
+    tmp_path: Path,
+) -> None:
+    undeclared = _load(
+        tmp_path / "undeclared-fmu",
+        "package P {\n  part def Generator :> FmuModel;\n}",
+    )
+
+    with pytest.raises(ValueError, match=f"Role marker '{FMU_MODEL_MARKER}'"):
         validate_role_markers(undeclared)
 
 
@@ -190,4 +222,6 @@ def test_a_model_without_a_role_policy_is_still_a_part_definition() -> None:
 
     assert SSP_MODEL_MARKER == "SspModel"
     assert ANALYSIS_MARKER == "Analysis"
+    assert FMU_MODEL_MARKER == "FmuModel"
     assert not is_ssp_model(architecture, architecture.get_part_def("Plain"))
+    assert not is_fmu_model(architecture, architecture.get_part_def("Plain"))

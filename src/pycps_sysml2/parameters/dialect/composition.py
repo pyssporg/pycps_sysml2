@@ -139,14 +139,15 @@ def component_refs(
                 ComponentRef(path=path, part_usage=usage, part_def=child)
             )
             if child.parts:
-                if child.name in ancestors:
+                key = architecture.stored_key(child)
+                if key in ancestors:
                     raise ValueError(
                         "Recursive part hierarchy at "
-                        f"'{'.'.join(path)}' ({child.name})"
+                        f"'{'.'.join(path)}' ({key})"
                     )
-                walk(child, path, ancestors | {child.name})
+                walk(child, path, ancestors | {key})
 
-    walk(system, (), frozenset({system.name}))
+    walk(system, (), frozenset({architecture.stored_key(system)}))
     return refs
 
 
@@ -157,9 +158,11 @@ def component_definitions(
     definitions: list[PartDefinition] = []
     seen: set[str] = set()
     for ref in component_refs(architecture, system):
-        if ref.part_def.name in seen:
+        # Stored keys, not bare names: two packages may declare the same name.
+        key = architecture.stored_key(ref.part_def)
+        if key in seen:
             continue
-        seen.add(ref.part_def.name)
+        seen.add(key)
         definitions.append(ref.part_def)
     return definitions
 
@@ -349,9 +352,10 @@ def applied_sets(
 
     seen_definitions: set[str] = set()
     for ref in refs:
-        if ref.part_def.name in seen_definitions:
+        key = architecture.stored_key(ref.part_def)
+        if key in seen_definitions:
             continue
-        seen_definitions.add(ref.part_def.name)
+        seen_definitions.add(key)
         if policy.roles.is_model(architecture, ref.part_def):
             # Model-owned bindings belong to the exported model, not the analysis.
             continue
@@ -435,10 +439,17 @@ def validate_parameter_dialect(
             continue
         definition = architecture.resolve_attribute_def(attribute)
         if policy.is_fmu_metadata(architecture, definition):
-            raise ValueError(
-                f"{system.name}.{name} is FMU metadata, but the composition is "
-                "not an FMU component"
-            )
+            if not policy.roles.is_fmu_model(architecture, system):
+                raise ValueError(
+                    f"{system.name}.{name} is FMU metadata, but the composition is "
+                    "not an FMU component"
+                )
+            if system.parts:
+                raise ValueError(
+                    f"{system.name}.{name} is FMU metadata, but the part has "
+                    "subparts; a nested system cannot also be an FMU component"
+                )
+            continue
         if policy.is_ssp_metadata(architecture, definition) and policy.roles.is_analysis(
             architecture, system
         ):

@@ -22,8 +22,9 @@ from pycps_sysml2.model.model import (
     VariantMember,
     endpoint_text,
 )
-from pycps_sysml2.model.parser import connection_endpoint, parse_tree
 from pycps_sysml2.model.names import unquote_name
+from pycps_sysml2.model.parser import parse_tree
+from pycps_sysml2.model.source import connection_endpoint
 
 
 # -- raw parse tree facts (see IMP-006, IMP-106) ----------------------------

@@ -12,8 +12,8 @@ status: current
 **Purpose.** `pycps_sysml2` is the single home of our SysML dialect: it parses
 SysML v2, builds the IR, and owns variation, selection, constraints, and every
 marker and metadata accessor for the SSP and FMI dialects alike (`SspModel`,
-`Analysis`, `Experiment`, `SspMetadata`, `FmuMetadata`, `ParameterInterface`,
-`ParameterSet`, the `pyssp_*` control attributes).
+`Analysis`, `FmuModel`, `Experiment`, `SspMetadata`, `FmuMetadata`,
+`ParameterInterface`, `ParameterSet`, the `pyssp_*` control attributes).
 
 **Roles and commitments.** `pyssp_sysml2` and `pyfmi_sysml2` implement this
 dialect: each imports the package for every SysML read and keeps no parser,

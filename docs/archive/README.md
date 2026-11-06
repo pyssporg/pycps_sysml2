@@ -18,6 +18,8 @@ Records live in the cold-storage archive; extract one with `pb archive read <ID>
 
 - **DEC-002** — Domain selection is an explicit policy · accepted · 2026-11-05 · `DEC-002`
   RolePolicy, DialectPolicy, and ControlAttributes replace hard-coded markers, are keyword-only, and have no generic default.
+- **DEC-004** — Imports gate cross-package visibility · accepted · 2026-11-05 · `DEC-004`
+  A qualified definition is visible only if its package is imported; unknown targets stay a loader-untouched concern for analyze.
 
 ### Implementation
 

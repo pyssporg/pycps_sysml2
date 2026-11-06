@@ -2,12 +2,18 @@
 
 This is the ONLY module in the repo that imports `sysmlpy` (0.96.4) and the only
 one that parses a raw ANTLR tree. It hands the rest of
-:mod:`pycps_sysml2.model` three things:
+:mod:`pycps_sysml2.model` four things:
 
-- :func:`parse_packages` — the ``package`` declarations of one file;
+- :func:`parse_files` — one sysmlpy load of every source file, with packages
+  of the same name merged by sysmlpy itself;
+- :func:`parse_packages` — the ``package`` declarations of one file, used as
+  the per-file attribution pass because the merged model carries no origin;
 - :func:`parse_tree` — the raw parse tree of one source text;
 - the grammar-layer walks and value normalizers that
   :mod:`pycps_sysml2.model.loader` builds the repo-owned model from.
+
+Authored source-text scanning (connection ends and constraint bodies) lives in
+:mod:`pycps_sysml2.model.source`, which imports no ``sysmlpy``.
 
 sysmlpy quirks compensated here (verified in the migration notes,
 ``sysmlpy_api.md`` §§4-6, 9-10):
@@ -33,12 +39,18 @@ from __future__ import annotations
 
 import re
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 
 import sysmlpy
 
-from pycps_sysml2.model.model import ConstraintParameter, ConstraintUsage
+from pycps_sysml2.model.model import ConstraintUsage
 from pycps_sysml2.model.names import unquote_name
+from pycps_sysml2.model.source import (
+    _body_text,
+    parse_constraint_body,
+    parse_import_declaration,
+)
 
 
 # sysmlpy tries to persist its ANTLR DFA cache on the first parse of a
@@ -57,12 +69,27 @@ UUID_PATTERN = re.compile(
 # -- package and tree loading (the sysmlpy contact point) -------------------
 
 
+def parse_files(paths: Sequence[Path | str]) -> sysmlpy.Model:
+    """Parse several files in one sysmlpy load, merging same-named packages.
+
+    sysmlpy merges files that declare the same package, so a caller does not
+    have to merge their children by hand. The returned model carries no
+    origin: no node exposes its source file, so per-definition attribution
+    stays a separate per-file pass (:func:`parse_packages`). Text
+    concatenation is not equivalent — ``sysmlpy.loads`` keeps duplicate
+    packages apart and reports ``DUPLICATE_NAME``.
+    """
+    return sysmlpy.load_files([str(Path(path)) for path in paths])
+
+
 def parse_packages(path: Path | str) -> list:
     """The top-level ``package`` declarations of one ``.sysml`` file.
 
     sysmlpy's ``load_files`` parses a single file into a Model whose direct
-    children are the file's top-level ``package`` declarations; everything the
-    repo supports lives in exactly one same-named package per file.
+    children are the file's top-level ``package`` declarations. This is also
+    the cheap per-file attribution pass: the merged model has no origin, so a
+    definition's file is recovered from here. Everything the repo supports
+    lives in exactly one same-named package per file.
     """
     file = Path(path)
     model = sysmlpy.load_files([str(file)])
@@ -79,22 +106,48 @@ def parse_tree(source: str):
     return sysmlpy.antlr_parser.parse(source)
 
 
-# -- connection endpoints ---------------------------------------------------
+# -- import declarations (visibility data, not resolution) -----------------
 
 
-def connection_endpoint(
-    names: list[str], file: Path | None = None
-) -> tuple[str | None, str]:
-    """Split one connection end into ``(part, port)``; a bare name is a boundary port."""
-    if not names:
-        where = f" in {file}" if file is not None else " in a variant body"
-        raise ValueError(
-            "Connection ends must be 'part.port' or a boundary 'port', "
-            f"got an empty end{where}"
-        )
-    if len(names) == 1:
-        return None, names[0]
-    return names[0], names[-1]
+def import_declarations(package) -> list[tuple[str, str | None]]:
+    """The import declarations of one parsed package, as plain data.
+
+    Each entry is ``(package, member)``: ``member`` is ``None`` for a ``::*``
+    wildcard and the imported name otherwise. The structured grammar objects
+    (``NamespaceImport`` / ``MembershipImport``) are read first; anything they
+    cannot describe (an alias, a shape a future pin changes) falls back to the
+    declaration's ``dump()`` text via
+    :func:`pycps_sysml2.model.source.parse_import_declaration`. Declarations
+    the fallback also cannot read are skipped; the loader does not validate
+    targets.
+    """
+    declarations: list[tuple[str, str | None]] = []
+    for element in package.imports:
+        declaration = _import_from_structure(element)
+        if declaration is None:
+            declaration = parse_import_declaration(element.dump())
+        if declaration is not None:
+            declarations.append(declaration)
+    return declarations
+
+
+def _import_from_structure(node) -> tuple[str, str | None] | None:
+    """Read one sysmlpy import node when its structured shape is usable."""
+    children = list(getattr(node, "children", ()))
+    if len(children) != 1:
+        return None
+    child = children[0]
+    namespace = getattr(child, "namespace", None)
+    if namespace is not None:
+        names = list(getattr(namespace.namespaces, "names", ()))
+        return ("::".join(names), None) if names else None
+    membership = getattr(child, "membership", None)
+    if membership is not None:
+        names = list(getattr(membership.name, "names", ()))
+        if len(names) < 2:
+            return None
+        return "::".join(names[:-1]), names[-1]
+    return None
 
 
 # -- attribute values (legacy §5.5 semantics) -------------------------------
@@ -375,200 +428,10 @@ def _literal_is_negative(element) -> bool:
     return getattr(unary, "operator", None) == "-"
 
 
-# -- constraint bodies ------------------------------------------------------
+# -- constraint usages ------------------------------------------------------
 #
-# ``grammar.dump()`` is reliable for constraint *usages* but garbles the
-# expression of a constraint *definition*. Definitions are therefore read from
-# the authored source text, once per file, by scanning the matching braces.
-
-_CONSTRAINT_DEF = re.compile(r"\bconstraint\s+def\s+([A-Za-z_]\w*)\s*\{")
-_IN_PARAMETER = re.compile(r"^in\s+([A-Za-z_]\w*)\s*:\s*([\w:]+)$")
-_IN_BINDING = re.compile(r"^in\s+([A-Za-z_]\w*)\s*=\s*(.+)$")
-_DOC_STRING = re.compile(r'\bdoc\s*"(?:\\.|[^"\\])*"')
-
-
-def _mask_ignored(text: str) -> str:
-    """Blank comments and string literals, preserving offsets and newlines."""
-    chars = list(text)
-    index = 0
-    length = len(text)
-    while index < length:
-        if text.startswith("//", index):
-            end = text.find("\n", index)
-            end = length if end == -1 else end
-            for position in range(index, end):
-                chars[position] = " "
-            index = end
-        elif text.startswith("/*", index):
-            end = text.find("*/", index + 2)
-            end = length if end == -1 else end + 2
-            for position in range(index, end):
-                if chars[position] != "\n":
-                    chars[position] = " "
-            index = end
-        elif text[index] == '"':
-            end = index + 1
-            escaped = False
-            while end < length:
-                if escaped:
-                    escaped = False
-                elif text[end] == "\\":
-                    escaped = True
-                elif text[end] == '"':
-                    end += 1
-                    break
-                end += 1
-            for position in range(index, end):
-                if chars[position] != "\n":
-                    chars[position] = " "
-            index = end
-        else:
-            index += 1
-    return "".join(chars)
-
-
-def _matching_brace(text: str, opening: int) -> int:
-    """Index of the ``}`` matching the ``{`` at *opening* in masked text."""
-    depth = 0
-    for index in range(opening, len(text)):
-        char = text[index]
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return index
-    raise ValueError("Unbalanced '{' in constraint body")
-
-
-def constraint_definitions_from_source(source: str) -> dict[str, str]:
-    """Authored body text of every ``constraint def Name { ... }``, keyed by name."""
-    masked = _mask_ignored(source)
-    bodies: dict[str, str] = {}
-    for match in _CONSTRAINT_DEF.finditer(masked):
-        opening = match.end() - 1
-        closing = _matching_brace(masked, opening)
-        bodies[match.group(1)] = source[opening + 1 : closing]
-    return bodies
-
-
-def constraint_definition_body(source: str, name: str) -> str | None:
-    """Authored body of the named constraint definition, or ``None``."""
-    return constraint_definitions_from_source(source).get(name)
-
-
-def _remove_comments(text: str) -> str:
-    """Drop ``//`` and ``/* ... */`` comments, keeping everything else."""
-    chars = list(text)
-    index = 0
-    length = len(text)
-    while index < length:
-        if text.startswith("//", index):
-            end = text.find("\n", index)
-            end = length if end == -1 else end
-            for position in range(index, end):
-                chars[position] = " "
-            index = end
-        elif text.startswith("/*", index):
-            end = text.find("*/", index + 2)
-            end = length if end == -1 else end + 2
-            for position in range(index, end):
-                if chars[position] != "\n":
-                    chars[position] = " "
-            index = end
-        elif text[index] == '"':
-            end = index + 1
-            escaped = False
-            while end < length:
-                if escaped:
-                    escaped = False
-                elif text[end] == "\\":
-                    escaped = True
-                elif text[end] == '"':
-                    end += 1
-                    break
-                end += 1
-            index = end
-        else:
-            index += 1
-    return "".join(chars)
-
-
-def _split_statements(text: str) -> list[str]:
-    """Split a body on top-level ``;``, respecting parentheses and strings."""
-    statements: list[str] = []
-    current: list[str] = []
-    depth = 0
-    quoted = False
-    escaped = False
-    for char in text:
-        if escaped:
-            current.append(char)
-            escaped = False
-            continue
-        if quoted and char == "\\":
-            current.append(char)
-            escaped = True
-            continue
-        if char == '"':
-            quoted = not quoted
-            current.append(char)
-            continue
-        if not quoted:
-            if char in "([{":
-                depth += 1
-            elif char in ")]}":
-                depth = max(depth - 1, 0)
-            elif char == ";" and depth == 0:
-                statements.append("".join(current).strip())
-                current = []
-                continue
-        current.append(char)
-    tail = "".join(current).strip()
-    if tail:
-        statements.append(tail)
-    return [statement for statement in statements if statement]
-
-
-def parse_constraint_body(
-    text: str,
-) -> tuple[dict[str, ConstraintParameter], str | None]:
-    """Turn authored constraint body text into parameters plus expression.
-
-    ``in name : Type`` becomes a typed definition parameter; ``in name = ref``
-    becomes a usage binding stored in ``ConstraintParameter.value``. Any other
-    statement is the boolean expression.
-    """
-    cleaned = _DOC_STRING.sub("", _remove_comments(text))
-    cleaned = re.sub(r"\bdoc\b", "", cleaned)
-    parameters: dict[str, ConstraintParameter] = {}
-    expressions: list[str] = []
-    for statement in _split_statements(cleaned):
-        parameter_match = _IN_PARAMETER.match(statement)
-        if parameter_match:
-            name, type_name = parameter_match.groups()
-            parameters[name] = ConstraintParameter(name=name, type_name=type_name)
-            continue
-        binding_match = _IN_BINDING.match(statement)
-        if binding_match:
-            name, reference = binding_match.groups()
-            parameters[name] = ConstraintParameter(
-                name=name, value=reference.strip()
-            )
-            continue
-        expressions.append(statement)
-    expression = " ".join(expressions).strip() or None
-    return parameters, expression
-
-
-def _body_text(dump: str) -> str:
-    """Body between the first ``{`` and its matching ``}`` of a grammar dump."""
-    masked = _mask_ignored(dump)
-    opening = masked.find("{")
-    if opening == -1:
-        return ""
-    closing = _matching_brace(masked, opening)
-    return dump[opening + 1 : closing]
+# ``grammar.dump()`` is reliable for constraint *usages*; definition bodies are
+# scanned from the authored source in :mod:`pycps_sysml2.model.source`.
 
 
 def constraint_usage(element) -> ConstraintUsage:

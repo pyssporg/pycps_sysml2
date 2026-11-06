@@ -19,6 +19,7 @@ Value semantics (mirrors the retired `pycps_sysmlv2` contract):
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -278,11 +279,19 @@ class VariantMember:
 
 @dataclass
 class Definition:
-    """Common base for top-level package definitions."""
+    """Common base for top-level package definitions.
+
+    ``name`` is always the bare declared name: artifact surfaces (SSD names,
+    ``<PartDef>.fmu``, C header stems, ``modelName``) never see a package
+    qualifier. ``package`` records the declaring package so
+    :class:`Architecture` can keep same-named definitions of different packages
+    apart; it is ``None`` for a synthesized definition.
+    """
 
     name: str
     doc: str | None = None
     source_file: str | None = None
+    package: str | None = None
 
 
 @dataclass
@@ -385,10 +394,27 @@ class RequirementDefinition(Definition):
 
 @dataclass
 class Architecture:
-    """A merged, same-package SysML v2 architecture.
+    """A merged SysML v2 architecture spanning one or more packages.
 
     Member dicts are insertion-ordered; ``connections`` is keyed by
     ``Connection.key`` (``"src.src_port->dst.dst_port"``).
+
+    Package qualification is storage-only. A definition of the architecture's
+    own package (or with no package at all, i.e. synthesized) is keyed by its
+    bare :attr:`Definition.name`; a definition of any other package is keyed
+    ``"<package>::<name>"``. Definition ``.name`` stays bare everywhere. A
+    single-package model therefore keeps exactly the bare keys it had before.
+
+    ``included_definitions`` holds the *stored keys* supplied by included roots,
+    not authored in the model. Consumers such as the exporter skip them.
+
+    ``imports`` maps an imported package name to the members it exposes, or
+    ``None`` for a ``::*`` wildcard. It gates cross-package visibility: a
+    qualified definition is reachable only through a matching entry, so a bare
+    name never falls back to a package the model did not import. Visibility is
+    architecture-wide, not per importing file — every collected import applies
+    to the whole merged architecture. That is a deliberate simplification until
+    SysML scopes are modelled.
     """
 
     package_name: str
@@ -401,88 +427,177 @@ class Architecture:
     constraint_definitions: dict[str, ConstraintDefinition] = field(
         default_factory=dict
     )
+    included_definitions: set[str] = field(default_factory=set)
+    imports: dict[str, frozenset[str] | None] = field(default_factory=dict)
+
+    # -- namespace ---------------------------------------------------------
+
+    def stored_key(self, definition: Definition) -> str:
+        """The namespace key a definition is stored under.
+
+        A definition of the architecture's package — or an unpackage
+        synthesized one — stays bare; every other package qualifies it.
+        """
+        if definition.package in (None, self.package_name):
+            return definition.name
+        return f"{definition.package}::{definition.name}"
+
+    def _imported(self, package: str, member: str | None = None) -> bool:
+        """Whether *package* exposes every member or just *member*.
+
+        An import entry of ``None`` is a ``::*`` wildcard; otherwise only the
+        named members are visible. A package with no entry exposes nothing.
+        """
+        if package not in self.imports:
+            return False
+        members = self.imports[package]
+        return members is None or (member is not None and member in members)
+
+    def _visible_key(self, key: str) -> bool:
+        """Whether a stored qualified key is reachable through an import."""
+        if "::" not in key:
+            return True
+        package, member = key.rsplit("::", 1)
+        return self._imported(package, member)
+
+    def resolve(
+        self, definitions: Mapping[str, Definition], name: str
+    ) -> Definition | None:
+        """The definition *name* refers to in one definition namespace.
+
+        An exact stored-key hit always wins, provided an imported package
+        exposes it. A bare name falls back to the *visible* qualified
+        definitions: one match returns it, several raise a ``ValueError``
+        naming every candidate, none returns ``None``. An explicitly qualified
+        name that names an existing definition in a package the architecture
+        does not import raises, because the author most likely forgot the
+        import; a qualified name that matches nothing stays ``None``, leaving
+        unknown targets to ``analyze``.
+        """
+        if name in definitions:
+            if "::" in name and not self._visible_key(name):
+                package = name.rsplit("::", 1)[0]
+                raise ValueError(
+                    f"Definition '{name}' is in package '{package}', which is "
+                    "not imported; add "
+                    f"'private import {package}::*;' to make it visible"
+                )
+            return definitions[name]
+        if "::" in name:
+            return None
+        candidates = [
+            key
+            for key in definitions
+            if "::" in key
+            and self._visible_key(key)
+            and key.rsplit("::", 1)[1] == name
+        ]
+        if not candidates:
+            return None
+        if len(candidates) > 1:
+            raise ValueError(
+                f"Ambiguous definition name '{name}'; qualify it with one of: "
+                f"{', '.join(sorted(candidates))}"
+            )
+        return definitions[candidates[0]]
+
+    def has_definition(self, definitions: Mapping[str, Definition], name: str) -> bool:
+        """Whether *name* resolves to a definition in that namespace."""
+        return self.resolve(definitions, name) is not None
 
     # -- lookups -----------------------------------------------------------
 
     def get_part_def(self, name: str) -> PartDefinition:
-        try:
-            return self.part_definitions[name]
-        except KeyError:
-            raise KeyError(f"Definition not found in namespace: Key:{name}") from None
+        definition = self.resolve(self.part_definitions, name)
+        if not isinstance(definition, PartDefinition):
+            raise KeyError(f"Definition not found in namespace: Key:{name}")
+        return definition
 
     def get_port_def(self, name: str) -> PortDefinition:
-        try:
-            return self.port_definitions[name]
-        except KeyError:
-            raise KeyError(f"Definition not found in namespace: Key:{name}") from None
+        definition = self.resolve(self.port_definitions, name)
+        if not isinstance(definition, PortDefinition):
+            raise KeyError(f"Definition not found in namespace: Key:{name}")
+        return definition
 
     def get_attribute_def(self, name: str) -> AttributeDefinition:
-        try:
-            return self.attribute_definitions[name]
-        except KeyError:
-            raise KeyError(f"Definition not found in namespace: Key:{name}") from None
+        definition = self.resolve(self.attribute_definitions, name)
+        if not isinstance(definition, AttributeDefinition):
+            raise KeyError(f"Definition not found in namespace: Key:{name}")
+        return definition
 
     def get_constraint_def(self, name: str) -> ConstraintDefinition:
-        try:
-            return self.constraint_definitions[name]
-        except KeyError:
-            raise KeyError(f"Definition not found in namespace: Key:{name}") from None
+        definition = self.resolve(self.constraint_definitions, name)
+        if not isinstance(definition, ConstraintDefinition):
+            raise KeyError(f"Definition not found in namespace: Key:{name}")
+        return definition
 
     # -- construction ------------------------------------------------------
 
     def add_part_def(self, part_def: PartDefinition) -> PartDefinition:
-        if part_def.name in self.part_definitions:
+        key = self.stored_key(part_def)
+        if key in self.part_definitions:
             raise ValueError(f"Duplicate part definition for {part_def.name}")
-        self.part_definitions[part_def.name] = part_def
+        self.part_definitions[key] = part_def
         return part_def
 
     def add_port_def(self, port_def: PortDefinition) -> PortDefinition:
-        if port_def.name in self.port_definitions:
+        key = self.stored_key(port_def)
+        if key in self.port_definitions:
             raise ValueError(f"Duplicate port definition for {port_def.name}")
-        self.port_definitions[port_def.name] = port_def
+        self.port_definitions[key] = port_def
         return port_def
 
     def add_attribute_def(
         self, attribute_def: AttributeDefinition
     ) -> AttributeDefinition:
-        if attribute_def.name in self.attribute_definitions:
+        key = self.stored_key(attribute_def)
+        if key in self.attribute_definitions:
             raise ValueError(
                 f"Duplicate attribute definition for {attribute_def.name}"
             )
-        self.attribute_definitions[attribute_def.name] = attribute_def
+        self.attribute_definitions[key] = attribute_def
         return attribute_def
 
     def add_requirement_def(
         self, requirement_def: RequirementDefinition
     ) -> RequirementDefinition:
-        if requirement_def.name in self.requirement_definitions:
+        key = self.stored_key(requirement_def)
+        if key in self.requirement_definitions:
             raise ValueError(
                 f"Duplicate requirement definition for {requirement_def.name}"
             )
-        self.requirement_definitions[requirement_def.name] = requirement_def
+        self.requirement_definitions[key] = requirement_def
         return requirement_def
 
     def add_constraint_def(
         self, constraint_def: ConstraintDefinition
     ) -> ConstraintDefinition:
-        if constraint_def.name in self.constraint_definitions:
+        key = self.stored_key(constraint_def)
+        if key in self.constraint_definitions:
             raise ValueError(
                 f"Duplicate constraint definition for {constraint_def.name}"
             )
-        self.constraint_definitions[constraint_def.name] = constraint_def
+        self.constraint_definitions[key] = constraint_def
         return constraint_def
 
     # -- usage resolution ----------------------------------------------------
 
-    def resolve_part(self, usage: PartUsage | str) -> PartDefinition | None:
+    def resolve_part(self, usage: PartUsage | str | None) -> PartDefinition | None:
         """The part definition a part usage refers to, or None if unknown."""
-        name = usage.type_name if isinstance(usage, PartUsage) else usage
-        return self.part_definitions.get(name)
+        if isinstance(usage, PartUsage):
+            usage = usage.type_name
+        if not usage:
+            return None
+        definition = self.resolve(self.part_definitions, usage)
+        return definition if isinstance(definition, PartDefinition) else None
 
     def resolve_port(self, usage: PortUsage | str) -> PortDefinition | None:
         """The port definition a port usage refers to, or None if unknown."""
         name = usage.type_name if isinstance(usage, PortUsage) else usage
-        return self.port_definitions.get(name)
+        if not name:
+            return None
+        definition = self.resolve(self.port_definitions, name)
+        return definition if isinstance(definition, PortDefinition) else None
 
     def resolve_attribute_def(
         self, usage: Attribute | str | None
@@ -493,7 +608,8 @@ class Architecture:
         name = usage.type_name if isinstance(usage, Attribute) else usage
         if not name:
             return None
-        return self.attribute_definitions.get(name)
+        definition = self.resolve(self.attribute_definitions, name)
+        return definition if isinstance(definition, AttributeDefinition) else None
 
     def iter_part_usages(self, part_def: PartDefinition) -> Iterator[PartUsage]:
         return iter(part_def.parts.values())

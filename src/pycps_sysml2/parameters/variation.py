@@ -53,7 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pycps_sysml2.metadata import RolePolicy
-from pycps_sysml2.parameters.configuration import model_root
+from pycps_sysml2.parameters.configuration import model_root, qualified_type
 from pycps_sysml2.parameters.dialect.markers import is_parameter_interface
 from pycps_sysml2.model import (
     Architecture,
@@ -204,13 +204,19 @@ def _configuration_variation(
         return None
     value = usage.value
     if "::" in value:
-        name = value.split("::")[0]
+        definition = qualified_type(
+            architecture, architecture.part_definitions, value
+        )
     else:
         local = owner.parts.get(value)
         if local is None or len(local.subsets) != 1:
             return None
-        name = local.subsets[0].split("::")[0]
-    definition = architecture.part_definitions.get(name.strip())
+        subset = local.subsets[0]
+        definition = (
+            qualified_type(architecture, architecture.part_definitions, subset)
+            if "::" in subset
+            else architecture.resolve_part(subset)
+        )
     if definition is None or not definition.is_variation:
         return None
     return definition
@@ -235,14 +241,22 @@ def _configuration_attribute_variation(
     ):
         return None
     if "::" in value:
-        name = value.split("::")[0]
+        definition = qualified_type(
+            architecture, architecture.attribute_definitions, value
+        )
     else:
         local = owner.parts.get(value)
         if local is None or len(local.subsets) != 1:
             return None
-        name = local.subsets[0].split("::")[0]
-    definition = architecture.attribute_definitions.get(name.strip())
-    if definition is None or not definition.is_variation:
+        subset = local.subsets[0]
+        definition = (
+            qualified_type(
+                architecture, architecture.attribute_definitions, subset
+            )
+            if "::" in subset
+            else architecture.resolve_attribute_def(subset)
+        )
+    if not isinstance(definition, AttributeDefinition) or not definition.is_variation:
         return None
     return definition
 
@@ -256,9 +270,10 @@ def _usage_records(
     def walk(
         part_def: PartDefinition, prefix: tuple[str, ...], seen: frozenset[str]
     ) -> None:
-        if part_def.name in seen:
+        key = architecture.stored_key(part_def)
+        if key in seen:
             return
-        seen = seen | {part_def.name}
+        seen = seen | {key}
         for name, usage in part_def.parts.items():
             path = prefix + (name,)
             definition = architecture.resolve_part(usage)
@@ -372,9 +387,9 @@ def _walk_attribute_records(
     seen_usages: set[tuple[str, str]],
     records: list[_AttributeUsage],
 ) -> None:
-    if part_def.name in seen:
+    if architecture.stored_key(part_def) in seen:
         return
-    seen = seen | {part_def.name}
+    seen = seen | {architecture.stored_key(part_def)}
     for name, attribute in part_def.attributes.items():
         _append_attribute_record(
             architecture, part_def, prefix, name, attribute, seen_usages, records
@@ -401,7 +416,7 @@ def _append_attribute_record(
     seen_usages: set[tuple[str, str]],
     records: list[_AttributeUsage],
 ) -> None:
-    identity = (part_def.name, name)
+    identity = (architecture.stored_key(part_def), name)
     if identity in seen_usages:
         return
     seen_usages.add(identity)
@@ -531,7 +546,7 @@ def _part_choice(
                 f"'{point_name}' has no resolvable type and no body; write "
                 f"'variant part {variant_name} : <PartDef>;' or give it a body."
             )
-        if variant.type_name not in architecture.part_definitions:
+        if architecture.resolve_part(variant.type_name) is None:
             raise ValueError(
                 f"Selected variant '{variant_name}' of variation point "
                 f"'{point_name}' has type '{variant.type_name}', which is not a "
@@ -582,7 +597,7 @@ def _attribute_choice(
             "has no resolvable type; variant bodies are not supported. Write "
             f"'variant attribute {variant_name} : <AttributeDef>;'."
         )
-    if variant.type_name not in architecture.attribute_definitions:
+    if architecture.resolve_attribute_def(variant.type_name) is None:
         raise ValueError(
             f"Selected variant '{variant_name}' of variation point '{point.name}' "
             f"has type '{variant.type_name}', which is not an attribute "
@@ -840,7 +855,7 @@ def resolve_selected(
             )
 
     resolved = copy.deepcopy(architecture)
-    resolved_source = resolved.get_part_def(source.name)
+    resolved_source = resolved.get_part_def(architecture.stored_key(source))
     pending = dict(selections or {})
     applied: list[tuple[_Usage | _AttributeUsage, VariantMember, bool]] = []
     canonical: dict[str, str] = {}

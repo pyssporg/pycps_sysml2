@@ -27,6 +27,7 @@ from pycps_sysml2.metadata import RolePolicy
 from pycps_sysml2.model import (
     Architecture,
     Attribute,
+    Definition,
     PartDefinition,
     PartUsage,
     VariantBody,
@@ -37,12 +38,48 @@ __all__ = [
     "configuration_name",
     "derived_selection",
     "model_root",
+    "qualified_type",
     "scope_analysis_to_root",
 ]
 
 
 def _short(name: str) -> str:
     return name.split("::")[-1].strip()
+
+
+def qualified_type(
+    architecture: Architecture,
+    definitions: Mapping[str, Definition],
+    value: str,
+) -> Definition:
+    """The definition a ``[Pkg::]Type::Variant`` configuration value names.
+
+    The last segment is the variant; the type is the longest remaining prefix
+    that resolves, dropping leading segments one at a time. Raises
+    ``ValueError`` when the value is ambiguous or no prefix resolves, naming
+    the value either way.
+    """
+    segments = value.split("::")
+    if len(segments) < 2:
+        raise ValueError(
+            f"configuration value '{value}' is not '[Pkg::]Type::Variant'"
+        )
+    prefix = segments[:-1]
+    while prefix:
+        candidate = "::".join(prefix)
+        try:
+            definition = architecture.resolve(definitions, candidate)
+        except ValueError as error:
+            raise ValueError(
+                f"configuration value '{value}' is ambiguous: {error}"
+            ) from None
+        if definition is not None:
+            return definition
+        prefix = prefix[1:]
+    raise ValueError(
+        f"configuration value '{value}' names no definition; "
+        f"tried {', '.join(segments[:-1])}"
+    )
 
 
 def _definition(
@@ -81,13 +118,13 @@ def _model_supertype(
     marker = roles.model_marker
     if marker is not None and _short(definition.name) == marker:
         return None
-    names = [_short(name) for name in definition.specializes]
-    if marker is not None and marker in names:
+    specializations = list(definition.specializes)
+    if marker is not None and marker in [_short(name) for name in specializations]:
         return None
     bases = []
     others = []
-    for name in names:
-        base = architecture.part_definitions.get(name)
+    for name in specializations:
+        base = architecture.resolve_part(name)
         if base is None:
             continue
         if roles.is_model(architecture, base):
@@ -303,7 +340,7 @@ def _select(
     variant_member, body = variant
     if point.kind != "part" or variant_member.type_name is None:
         return
-    nested = architecture.part_definitions.get(_short(variant_member.type_name))
+    nested = architecture.resolve_part(variant_member.type_name)
     if nested is None:
         return
     inner: dict[str, _Binding] = {}
@@ -327,14 +364,20 @@ def _resolve(
     value = binding.usage.value
     assert value is not None
     if "::" in value:
-        type_name, variant_name = (_short(part) for part in value.rsplit("::", 1))
-        if type_name != point.variation:
+        definitions = (
+            architecture.part_definitions
+            if point.kind == "part"
+            else architecture.attribute_definitions
+        )
+        definition = qualified_type(architecture, definitions, value)
+        if definition.name != point.variation:
             raise ValueError(
                 f"binding '{value}' for variation point '{point.variation}' at "
-                f"'{key}' names type '{type_name}'; expected '{point.variation}'"
+                f"'{key}' names type '{definition.name}'; "
+                f"expected '{point.variation}'"
             )
         return (
-            _variant(point, variant_name, key, binding.where),
+            _variant(point, value.rsplit("::", 1)[1], key, binding.where),
             getattr(binding.usage, "body", None),
         )
 

@@ -28,10 +28,12 @@ Format (2-space indent, one blank line between definitions, trailing newline):
     }
 
 Grouping follows the retired ``export_declared`` semantics: definitions are
-grouped by ``source_file`` (default ``architecture.sysml````), file names are
+grouped by ``source_file`` (default ``architecture.sysml``), file names are
 sorted, and within a file requirements, ports, attribute defs, and parts each
 appear sorted by name. Attributes, port usages, and part usages are sorted by
 name inside their definition; connections and bindings keep insertion order.
+A definition of a package other than the architecture's own is omitted, so an
+included root never appears in the model's declaration text.
 """
 
 from __future__ import annotations
@@ -304,13 +306,25 @@ def _definition_lines(definition: Definition) -> list[str]:
 
 
 def export_declared(architecture: Architecture) -> dict[str, str]:
-    """Emit one SysML v2 text per source file, keyed by bare file name."""
-    groups: dict[str, list[Definition]] = {}
+    """Emit one SysML v2 text per source file, keyed by bare file name.
+
+    Only definitions of the architecture's own package are emitted: an included
+    root supplies definitions from its own package, and those are not part of
+    the model's declaration text. A single-package model therefore yields the
+    same text as before, one ``package`` block per file.
+    """
+    # Grouped by (package, source file) so the emitted blocks are ordered by
+    # package name first, then by source file. Only the architecture's own
+    # package survives the filter, so a file name still maps to one block.
+    groups: dict[tuple[str, str], list[Definition]] = {}
 
     def collect(definitions) -> None:
         for definition in sorted(definitions, key=lambda d: d.name):
+            package = definition.package or architecture.package_name
+            if package != architecture.package_name:
+                continue
             file_name = definition.source_file or DEFAULT_SOURCE_FILE
-            groups.setdefault(file_name, []).append(definition)
+            groups.setdefault((package, file_name), []).append(definition)
 
     # Collect in requirements → ports → attribute defs → parts order so each
     # file's layout follows the retired exporter's layout extended with value
@@ -322,9 +336,9 @@ def export_declared(architecture: Architecture) -> dict[str, str]:
     collect(architecture.part_definitions.values())
 
     files: dict[str, str] = {}
-    for file_name in sorted(groups):
-        lines = [f"package {quote_name(architecture.package_name)} {{"]
-        for index, definition in enumerate(groups[file_name]):
+    for package, file_name in sorted(groups):
+        lines = [f"package {quote_name(package)} {{"]
+        for index, definition in enumerate(groups[(package, file_name)]):
             if index:
                 lines.append("")
             lines.extend(_definition_lines(definition))

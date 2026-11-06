@@ -54,22 +54,27 @@ def specializes_marker_deep(
 
     Unlike :func:`specializes_marker` this matches the definition's own short
     name, so ``is_ssp_model(SspModel_marker_definition)`` stays ``True``.
+
+    The visited set holds stored keys, not bare names: two packages may define
+    the same bare name, and a bare-name guard would prune the second definition
+    of that name and miss a real chain through it.
     """
     if definition is None:
         return False
     if short_name(definition.name) == marker:
         return True
     seen = set() if seen is None else seen
-    if definition.name in seen:
+    key = architecture.stored_key(definition)
+    if key in seen:
         return False
-    seen.add(definition.name)
+    seen.add(key)
     for supertype in definition.specializes:
         if short_name(supertype) == marker:
             return True
         if isinstance(definition, PartDefinition):
-            base = architecture.part_definitions.get(short_name(supertype))
+            base = architecture.resolve_part(supertype)
         else:
-            base = architecture.attribute_definitions.get(short_name(supertype))
+            base = architecture.resolve_attribute_def(supertype)
         if specializes_marker_deep(architecture, base, marker, seen=seen):
             return True
     return False
@@ -84,16 +89,18 @@ def effective_members(
     """Direct members plus inherited members; inherited values win by name.
 
     A derived member with no value of its own keeps the inherited value instead
-    of shadowing it with ``None``.
+    of shadowing it with ``None``. The visited set holds stored keys so a
+    same-named definition of another package is not mistaken for a cycle.
     """
     seen = set() if seen is None else seen
-    if definition.name in seen:
+    key = architecture.stored_key(definition)
+    if key in seen:
         return {}
-    seen.add(definition.name)
+    seen.add(key)
 
     members: dict[str, Attribute] = {}
     for supertype in definition.specializes:
-        base = architecture.attribute_definitions.get(short_name(supertype))
+        base = architecture.resolve_attribute_def(supertype)
         if base is not None:
             members.update(effective_members(architecture, base, seen=seen))
     for name, attribute in definition.attributes.items():

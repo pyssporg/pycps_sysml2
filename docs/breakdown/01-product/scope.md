@@ -12,9 +12,14 @@ status: current
 **Promise.** One package answers every SysML question an implementer asks, and
 answers it the same way for the SSP and the FMI domain.
 
-- **Load.** `load(path)` takes a `.sysml` file or a directory of them, merges
-  the sorted files into one same-package `Architecture`, and does not validate:
-  unresolved references surface later as missing lookups.
+- **Load.** `load(path, *includes)` takes a `.sysml` file or a directory of
+  them as the primary root, loads the sorted files in one sysmlpy parse into
+  one same-package `Architecture`, and does not validate: unresolved
+  references surface later as missing lookups. Further roots in `*includes` (or after the first element of
+  a sequence) merge included definitions under any package name; a duplicate
+  definition is an error and included names are excluded from export. An
+  included package is visible only through its `private import`; unknown
+  targets are left to `analyze`.
 - **IR.** Part, port, attribute, requirement, and constraint definitions and
   usages, with multiplicity, typed values, doc text, `source_file`, connections
   keyed by endpoint pair, and bindings kept as feature chains.

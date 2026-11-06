@@ -21,6 +21,7 @@ from pycps_sysml2.parameters.dialect.composition import (
     validate_parameter_dialect,
 )
 from pycps_sysml2.parameters.policy import SSP_POLICY, DialectPolicy
+from tests.fixture_files import fixture_text
 from tests.testhelpers import write_model
 
 
@@ -75,6 +76,8 @@ LEGACY_MODEL = """package Legacy {
     part comp : Comp;
   }
 }"""
+
+FMU_COMPONENT_MODEL = fixture_text("fmu-model/component.sysml")
 
 
 def _load(tmp_path: Path, text: str) -> Architecture:
@@ -150,6 +153,27 @@ def test_the_migration_flags_let_an_older_architecture_through(
     validate_parameter_dialect(architecture, system, policy=permissive)
 
 
+def test_fmu_metadata_is_accepted_only_on_an_fmu_model_composition(
+    tmp_path: Path,
+) -> None:
+    """The marker makes the composition the export unit; subparts still reject."""
+    architecture = _load(tmp_path, FMU_COMPONENT_MODEL)
+
+    validate_parameter_dialect(
+        architecture, architecture.get_part_def("Comp"), policy=SSP_POLICY
+    )
+
+    with pytest.raises(ValueError, match="not an FMU component"):
+        validate_parameter_dialect(
+            architecture, architecture.get_part_def("Unmarked"), policy=SSP_POLICY
+        )
+
+    with pytest.raises(ValueError, match="subparts"):
+        validate_parameter_dialect(
+            architecture, architecture.get_part_def("Nested"), policy=SSP_POLICY
+        )
+
+
 def _imported_names(tree: ast.AST) -> set[str]:
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -173,8 +197,13 @@ def _called_names(tree: ast.AST) -> set[str]:
 
 def test_the_parameter_package_does_not_reach_for_role_vocabulary() -> None:
     """Only ``policy.py`` may bind the role markers; everything else injects it."""
-    role_markers = {"SSP_MODEL_MARKER", "ANALYSIS_MARKER", "EXPERIMENT_MARKER"}
-    role_calls = {"is_ssp_model", "is_analysis"}
+    role_markers = {
+        "SSP_MODEL_MARKER",
+        "ANALYSIS_MARKER",
+        "FMU_MODEL_MARKER",
+        "EXPERIMENT_MARKER",
+    }
+    role_calls = {"is_ssp_model", "is_analysis", "is_fmu_model"}
     offenders: list[str] = []
 
     for path in sorted(PARAMETERS.rglob("*.py")):

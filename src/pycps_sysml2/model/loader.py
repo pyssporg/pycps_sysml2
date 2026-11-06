@@ -1,10 +1,28 @@
 """File orchestration: builds the repo-owned model from ``.sysml`` files.
 
 This module walks a load target, asks :mod:`pycps_sysml2.model.parser` for one
-file's packages and :mod:`pycps_sysml2.model.variation` for that file's
-variation facts, merges every package into one
+merged parse of every file, merges the resulting packages into one
 :class:`~pycps_sysml2.model.model.Architecture`, and builds the repo-owned
 dataclasses from the parsed elements.
+
+sysmlpy itself merges files that declare the same package, so the primary
+root's files and every included root go through a single
+:func:`~pycps_sysml2.model.parser.parse_files` call. The merged model carries
+no origin, so a second, cheap per-file pass recovers the file behind each
+definition; that pass lives in :mod:`pycps_sysml2.model.attribution` and is
+the price of the merged parse. The primary root must resolve to one package
+name because ``Architecture.package_name`` stores it; include roots may use
+any package name.
+
+Package names are first-class in the resulting
+:class:`~pycps_sysml2.model.model.Architecture`: a definition of the primary
+package is stored under its bare name, and one from any other package under
+``"<package>::<name>"``. Definition ``.name`` stays bare, so no package
+qualifier reaches an artifact surface. Import declarations gate cross-package
+visibility (``Architecture.imports``); they are collected in the per-file scan
+because sysmlpy's own package merge keeps only the first file's imports.
+Unknown import targets are left untouched: a missing package is a model fact
+``analyze`` reports, not a load error.
 
 The parser boundary is exactly one module: only
 :mod:`pycps_sysml2.model.parser` imports ``sysmlpy`` and reads raw ANTLR trees,
@@ -16,8 +34,16 @@ surface as ``resolve_part``/``resolve_port`` returning ``None`` in consumers.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
+from pycps_sysml2.model.attribution import (
+    MergeState,
+    attribution,
+    collect_imports,
+    primary_package_name,
+    scan_files,
+)
 from pycps_sysml2.model.model import (
     Architecture,
     Attribute,
@@ -37,36 +63,81 @@ from pycps_sysml2.model.parser import (
     UUID_PATTERN,
     assert_constraint,
     binding_endpoints,
-    connection_endpoint,
     connection_endpoints,
-    constraint_definitions_from_source,
     constraint_usage,
     is_definition_variation,
     multiplicity,
     normalize_value,
-    parse_constraint_body,
+    parse_files,
     port_direction,
     specializes,
-    parse_packages,
 )
-from pycps_sysml2.model.variation import VariationFacts, variation_facts
+from pycps_sysml2.model.source import connection_endpoint, parse_constraint_body
+from pycps_sysml2.model.variation import VariationFacts
 
 __all__ = ["load"]
 
 
-def load(path: Path | str) -> Architecture:
-    """Load a ``.sysml`` file or a directory of them into an Architecture.
+_DEFINITION_ATTRIBUTES = (
+    ("part", "part_definitions"),
+    ("port", "port_definitions"),
+    ("attribute", "attribute_definitions"),
+    ("requirement", "requirement_definitions"),
+    ("constraint", "constraint_definitions"),
+)
 
-    A file loads exactly that file; a directory loads its ``*.sysml`` files
-    non-recursively in sorted name order, and every file must declare the
-    same package. Each file is parsed by sysmlpy separately (never as one
-    merged multi-file load) so definitions keep per-file ``source_file``
-    tracking and cross-file duplicates can be reported precisely.
+
+def load(
+    path: Path | str | Sequence[Path | str],
+    *includes: Path | str,
+) -> Architecture:
+    """Load one primary architecture root plus any number of included roots.
+
+    ``path`` is either one root or a sequence whose first element is the
+    primary model root; any further sequence elements and ``*includes`` are
+    included roots. A root is a ``.sysml`` file or a directory of them. A file
+    loads exactly that file; a directory loads its ``*.sysml`` files
+    non-recursively in sorted name order. The primary model's files must
+    declare the same package name.
+
+    Every file is parsed in one ``sysmlpy.load_files`` call, so files that
+    declare the same package are merged by sysmlpy. A second per-file pass
+    recovers each definition's ``source_file`` and lets cross-file duplicates
+    name the declaring files precisely.
+
+    Included roots are opt-in: with none, ``load(primary)`` loads exactly the
+    primary's definitions and leaves the behaviour unchanged. An included root
+    merges shared definitions and need not use the model's package name,
+    because it supplies definitions rather than composition; the exemption is
+    the package name only. A definition whose stored key the model already
+    declares is an error, never an override, and so is one key supplied by two
+    included roots; the same bare name in a different package is a distinct
+    definition and coexists. Every key from an included root is recorded on
+    :attr:`Architecture.included_definitions`.
     """
-    files = _resolve_files(Path(path))
-    architecture = _architecture_from(files[0])
-    for file in files[1:]:
-        _merge_file(architecture, file)
+    entries = [path] if isinstance(path, (str, Path)) else list(path)
+    if not entries:
+        raise ValueError("load() requires a primary model root")
+    include_entries = [Path(entry) for entry in entries[1:]]
+    include_entries.extend(Path(entry) for entry in includes)
+
+    files = _resolve_files(Path(entries[0]))
+    primary = scan_files([(file, None) for file in files])
+    package_name = primary_package_name(primary)
+
+    included_files = [
+        (file, root)
+        for root in include_entries
+        for file in _resolve_files(root)
+    ]
+    scanned = primary + scan_files(included_files)
+
+    model = parse_files([parsed.file for parsed in scanned])
+    architecture = Architecture(
+        package_name=package_name,
+        imports=collect_imports(scanned),
+    )
+    _merge_model(architecture, model, attribution(model, scanned))
     return architecture
 
 
@@ -90,91 +161,145 @@ def _resolve_files(path: Path) -> list[Path]:
     raise FileNotFoundError(f"No .sysml file found under {path}")
 
 
-# -- per-file loading and merging ------------------------------------------
+# -- merged loading --------------------------------------------------------
 
 
-def _architecture_from(file: Path) -> Architecture:
-    """Build a fresh Architecture from the first file of a load."""
-    packages, variation, source = _parse_file(file)
-    architecture = Architecture(package_name=packages[0].name)
-    _merge_packages(architecture, packages, file, variation, source)
-    return architecture
-
-
-def _merge_file(architecture: Architecture, file: Path) -> None:
-    """Merge one more file into ``architecture`` (package names must match)."""
-    packages, variation, source = _parse_file(file)
-    name = packages[0].name
-    if name != architecture.package_name:
-        raise ValueError(
-            f"Mismatched package names: {architecture.package_name} vs {name} in {file}"
-        )
-    _merge_packages(architecture, packages, file, variation, source)
-
-
-def _parse_file(file: Path) -> tuple[list, VariationFacts, str]:
-    """Parse one file: its package(s), variation facts, and source text.
-
-    The source text is read once here: ``parse_packages`` takes the path, the
-    raw-tree walk takes the text, and constraint-definition bodies are scanned
-    from the same text, so capture adds no second read.
-    """
-    source = file.read_text(encoding="utf-8")
-    return parse_packages(file), variation_facts(source), source
-
-
-def _merge_packages(
-    architecture: Architecture,
-    packages: list,
-    file: Path,
-    variation: VariationFacts,
-    source: str,
-) -> None:
-    """Add every definition of one file's package(s) to the architecture.
-
-    Top-level usages and other non-definition children are skipped silently
-    (legacy parity). Definitions are added parts first, then ports, then
-    attribute definitions, then requirements, then constraint definitions.
-    """
-    constraint_bodies = constraint_definitions_from_source(source)
-    for package in packages:
+def _merge_model(architecture: Architecture, model, attribution) -> None:
+    """Add every definition of the merged model, parts first, then the rest."""
+    state = MergeState(attribution)
+    for package in model.packages:
+        package_name = package.name
         for element in package.parts:
-            if element.is_definition:
-                part_def = _part_definition(element, file, variation)
-                _add_definition(architecture, architecture.add_part_def, part_def, file)
+            if not element.is_definition:
+                continue
+            parsed = state.take(package_name, "part", unquote_name(element.name))
+            _add_definition(
+                architecture,
+                architecture.add_part_def,
+                _part_definition(element, parsed.file, parsed.variation),
+                parsed,
+                state,
+                package_name,
+            )
         for element in package.ports:
-            if element.is_definition:
-                port_def = _port_definition(element, file)
-                _add_definition(architecture, architecture.add_port_def, port_def, file)
+            if not element.is_definition:
+                continue
+            parsed = state.take(package_name, "port", unquote_name(element.name))
+            _add_definition(
+                architecture,
+                architecture.add_port_def,
+                _port_definition(element, parsed.file),
+                parsed,
+                state,
+                package_name,
+            )
         for element in package.attributes:
-            if element.is_definition:
-                attribute_def = _attribute_definition(element, file, variation)
-                _add_definition(
-                    architecture, architecture.add_attribute_def, attribute_def, file
-                )
+            if not element.is_definition:
+                continue
+            parsed = state.take(
+                package_name, "attribute", unquote_name(element.name)
+            )
+            _add_definition(
+                architecture,
+                architecture.add_attribute_def,
+                _attribute_definition(element, parsed.file, parsed.variation),
+                parsed,
+                state,
+                package_name,
+            )
         for element in package.requirements:
-            if element.is_definition:
-                requirement_def = _requirement_definition(element, file)
-                _add_definition(
-                    architecture, architecture.add_requirement_def, requirement_def, file
-                )
+            if not element.is_definition:
+                continue
+            parsed = state.take(
+                package_name, "requirement", unquote_name(element.name)
+            )
+            _add_definition(
+                architecture,
+                architecture.add_requirement_def,
+                _requirement_definition(element, parsed.file),
+                parsed,
+                state,
+                package_name,
+            )
         for element in package.constraints:
-            if element.is_definition:
-                constraint_def = _constraint_definition(
-                    element, file, constraint_bodies
-                )
-                _add_definition(
-                    architecture, architecture.add_constraint_def, constraint_def, file
-                )
+            if not element.is_definition:
+                continue
+            parsed = state.take(
+                package_name, "constraint", unquote_name(element.name)
+            )
+            _add_definition(
+                architecture,
+                architecture.add_constraint_def,
+                _constraint_definition(
+                    element, parsed.file, parsed.constraint_bodies
+                ),
+                parsed,
+                state,
+                package_name,
+            )
 
 
-def _add_definition(architecture: Architecture, add, definition, file: Path) -> None:
+def _add_definition(architecture, add, definition, parsed, state, package) -> None:
     """Add a definition, re-raising duplicates with file context (legacy parity)."""
+    definition.package = package
+    include = parsed.include
+    if include is not None:
+        _reject_included_duplicate(
+            architecture,
+            definition,
+            include,
+            state.model_origins,
+            state.included_origins,
+        )
     try:
         add(definition)
     except ValueError:
         kind = type(definition).__name__.removesuffix("Definition").lower()
-        raise ValueError(f"Duplicate {kind} definition for {definition.name} in {file}") from None
+        raise ValueError(
+            f"Duplicate {kind} definition for {definition.name} in {parsed.file}"
+        ) from None
+    key = architecture.stored_key(definition)
+    if include is not None:
+        architecture.included_definitions.add(key)
+        state.included_origins[key] = include
+    else:
+        state.model_origins[key] = parsed.file
+
+
+def _reject_included_duplicate(
+    architecture: Architecture,
+    definition,
+    include: Path,
+    model_origins: dict[str, Path],
+    origins: dict[str, Path],
+) -> None:
+    """Reject an included definition the model or another root supplies.
+
+    Only a repeated stored key conflicts: the same bare name in a different
+    package is a distinct definition and coexists.
+    """
+    key = architecture.stored_key(definition)
+    for kind, attribute in _DEFINITION_ATTRIBUTES:
+        existing = getattr(architecture, attribute).get(key)
+        if existing is None:
+            continue
+        definition_kind = type(definition).__name__.removesuffix("Definition").lower()
+        if key in model_origins:
+            existing_path = model_origins[key]
+            raise ValueError(
+                f"Included {definition_kind} def '{definition.name}' from {include} "
+                f"conflicts with the {kind} def declared in {existing_path}; "
+                f"remove the local declaration of '{definition.name}' from "
+                f"{existing_path} to use the included definition."
+            )
+        existing_include = origins.get(
+            key, Path(existing.source_file or "<unknown>")
+        )
+        raise ValueError(
+            f"Included {definition_kind} def '{definition.name}' from {include} "
+            f"conflicts with the {kind} def already supplied by {existing_include}; "
+            "a name may come from only one included root."
+        )
 
 
 # -- definition builders ----------------------------------------------------
