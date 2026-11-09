@@ -112,12 +112,14 @@ class ParameterItem:
     value: object = None
 
 
-def parameter_items(attribute: Attribute) -> list[ParameterItem]:
+def parameter_items(attribute: Attribute, base_index: int = 0) -> list[ParameterItem]:
     """Expand an attribute's multiplicity/list value into SSP parameter items.
 
     Interfaces use the declared multiplicity (``Real[3]``) even without a
     value; legacy tuple values expand element-wise. The value is the declared
-    default when present, otherwise ``None``.
+    default when present, otherwise ``None``. ``base_index`` shifts the emitted
+    ``[i]`` suffix; the default 0 keeps the SSP convention, 1 targets
+    OMC-built Modelica FMUs, which declare arrays one-based.
     """
     type_name = attribute.primitive_type_str()
     if attribute.multiplicity:
@@ -139,7 +141,7 @@ def parameter_items(attribute: Attribute) -> list[ParameterItem]:
             values = value
         return [
             ParameterItem(
-                name=f"{attribute.name}[{index}]",
+                name=f"{attribute.name}[{index + base_index}]",
                 type_name=type_name,
                 value=values[index],
             )
@@ -149,7 +151,7 @@ def parameter_items(attribute: Attribute) -> list[ParameterItem]:
     if attribute.is_list:
         return [
             ParameterItem(
-                name=f"{attribute.name}[{index}]",
+                name=f"{attribute.name}[{index + base_index}]",
                 type_name=type_name,
                 value=value,
             )

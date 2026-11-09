@@ -110,3 +110,31 @@ def test_whole_object_bind_is_identity(tmp_path: Path) -> None:
         ("waypointX_km[1]", "autopilot.waypointX_km[1]"),
         ("waypointX_km[2]", "autopilot.waypointX_km[2]"),
     )
+
+
+def test_mapping_specs_base_index_one_renames_entries(tmp_path: Path) -> None:
+    """``base_index=1`` shifts the suffixes of expanded mapping entries."""
+    model = _model(
+        sets="""
+        attribute def NominalSet :> ParameterSet {
+          attribute waypointCount = 10;
+          attribute waypointX_km = (0.0, 10.0, 20.0);
+        }
+        """,
+        composition="""
+        attribute nominal : NominalSet;
+        bind autopilot.parameters = nominal;
+        """,
+    )
+    architecture = _load(tmp_path, model)
+    system = architecture.get_part_def(COMPOSITION_NAME)
+
+    specs = mapping_specs(architecture, system, policy=SSP_POLICY, base_index=1)
+
+    assert len(specs) == 1
+    assert specs[0].entries == (
+        ("waypointCount", "autopilot.waypointCount"),
+        ("waypointX_km[1]", "autopilot.waypointX_km[1]"),
+        ("waypointX_km[2]", "autopilot.waypointX_km[2]"),
+        ("waypointX_km[3]", "autopilot.waypointX_km[3]"),
+    )

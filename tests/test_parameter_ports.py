@@ -15,6 +15,7 @@ from pycps_sysml2.model import Architecture, load
 from pycps_sysml2.parameters.dialect.declarations import (
     parameter_declarations,
     parameter_interface,
+    parameter_items,
 )
 from pycps_sysml2.parameters.dialect.markers import validate_marker_definitions
 from tests.fixture_files import render_fixture
@@ -81,6 +82,36 @@ def test_out_direction_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="undirected or 'in'"):
         parameter_interface(architecture, architecture.get_part_def("Comp"))
+
+
+def test_parameter_items_default_is_zero_based(tmp_path: Path) -> None:
+    """The array suffix convention is ``[0]`` unless a base index is asked for."""
+    architecture = _load(tmp_path, _model())
+    part_def = architecture.get_part_def("Comp")
+    xs = next(
+        attribute
+        for attribute in parameter_declarations(architecture, part_def)
+        if attribute.name == "xs"
+    )
+
+    items = parameter_items(xs)
+
+    assert [item.name for item in items] == ["xs[0]", "xs[1]"]
+
+
+def test_parameter_items_base_index_one_renames_suffixes(tmp_path: Path) -> None:
+    """``base_index=1`` shifts every emitted ``[i]`` suffix by one."""
+    architecture = _load(tmp_path, _model())
+    part_def = architecture.get_part_def("Comp")
+    xs = next(
+        attribute
+        for attribute in parameter_declarations(architecture, part_def)
+        if attribute.name == "xs"
+    )
+
+    items = parameter_items(xs, base_index=1)
+
+    assert [item.name for item in items] == ["xs[1]", "xs[2]"]
 
 
 def test_attribute_bag_is_rejected(tmp_path: Path) -> None:

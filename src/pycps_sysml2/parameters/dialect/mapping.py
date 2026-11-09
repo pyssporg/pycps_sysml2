@@ -36,6 +36,7 @@ def _expand_entries(
     target_name: str,
     source: Attribute,
     target: Attribute,
+    base_index: int,
 ) -> list[tuple[str, str]]:
     """Source/target pairs for one mapped member, expanding fixed-length lists."""
     if source.value is None:
@@ -56,7 +57,10 @@ def _expand_entries(
                 f"'{target_name}' declares [{target.multiplicity}]"
             )
         return [
-            (f"{source_name}[{index}]", f"{target_name}[{index}]")
+            (
+                f"{source_name}[{index + base_index}]",
+                f"{target_name}[{index + base_index}]",
+            )
             for index in range(count)
         ]
     if isinstance(source.value, tuple):
@@ -84,6 +88,7 @@ def _identity_entries(
     interface: AttributeDefinition,
     component_name: str,
     policy: DialectPolicy,
+    base_index: int,
 ) -> list[tuple[str, str]]:
     """Expand a whole-object bind into identity mappings."""
     set_members = application.set_definition.attributes
@@ -104,6 +109,7 @@ def _identity_entries(
                 f"{component_name}.{member_name}",
                 source,
                 target,
+                base_index,
             )
         )
         mapped.add(member_name)
@@ -128,8 +134,13 @@ def mapping_entries(
     application: AppliedSet,
     *,
     policy: DialectPolicy,
+    base_index: int = 0,
 ) -> list[tuple[str, str]]:
-    """SSP ``(source, target)`` mapping entries for one applied set."""
+    """SSP ``(source, target)`` mapping entries for one applied set.
+
+    ``base_index`` shifts the ``[i]`` suffixes of expanded lists; the default 0
+    keeps the SSP convention, 1 targets one-based OMC-built Modelica FMUs.
+    """
     part_def = architecture.resolve_part(application.part_usage)
     if part_def is None:
         raise ValueError(
@@ -144,7 +155,9 @@ def mapping_entries(
 
     component_name = application.component_name
     if application.identity:
-        return _identity_entries(application, interface, component_name, policy)
+        return _identity_entries(
+            application, interface, component_name, policy, base_index
+        )
 
     set_members = application.set_definition.attributes
     entries: list[tuple[str, str]] = []
@@ -181,6 +194,7 @@ def mapping_entries(
                 f"{component_name}.{target_name}",
                 source,
                 target_attribute,
+                base_index,
             )
         )
         bound_sources.add(source_name)
@@ -278,12 +292,17 @@ def _warn_unapplied_set_usages(
 
 
 def mapping_specs(
-    architecture: Architecture, system: PartDefinition, *, policy: DialectPolicy
+    architecture: Architecture,
+    system: PartDefinition,
+    *,
+    policy: DialectPolicy,
+    base_index: int = 0,
 ) -> list[MappingSpec]:
     """Mapping entries for every applied set in a composition.
 
     A set usage declared in the composition but not bound to any component
     contributes no entries and is reported with a ``UserWarning``, naming it.
+    ``base_index`` is forwarded to :func:`mapping_entries`.
     """
     validate_marker_definitions(architecture)
     applications = [
@@ -291,7 +310,11 @@ def mapping_specs(
             application,
             tuple(
                 mapping_entries(
-                    architecture, system, application, policy=policy
+                    architecture,
+                    system,
+                    application,
+                    policy=policy,
+                    base_index=base_index,
                 )
             ),
         )
