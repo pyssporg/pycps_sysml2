@@ -32,7 +32,7 @@ from pycps_sysml2.model import (
     load,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Bound after the model so a subpackage that reads model types cannot re-enter
 # a half-initialised root module.
